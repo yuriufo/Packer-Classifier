@@ -1,11 +1,11 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 import os
 import csv
 import re
 import multiprocessing as mp
-from my_settings import settings
+import settings as sts
 
 
 # 获取路径下所有文件的绝对路径
@@ -36,9 +36,9 @@ def get_csv_opc_disa(file_path, save_csv_file):
 
 def get_addr_opc_disa(file_path):
     file_name = os.path.splitext(os.path.basename(file_path))[0]
-    sub_file_path = file_path.replace(settings.PACKER_RAW_PATH, '').replace(
+    sub_file_path = file_path.replace(sts.PACKER_RAW_PATH, '').replace(
         os.path.basename(file_path), '')
-    save_csv_path = settings.PACKER_SAVE_CSV_PATH + sub_file_path
+    save_csv_path = sts.PACKER_SAVE_CSV_PATH + sub_file_path
 
     if not os.path.exists(save_csv_path):
         os.makedirs(save_csv_path)
@@ -47,8 +47,8 @@ def get_addr_opc_disa(file_path):
     if os.path.exists(dst_path + '.csv'):
         return
 
-    command = 'pin -t {pintool_path} -- {packer_path} {file_name}.yuri'.format(
-        settings.PINTOOL_PATH, file_path, file_name)
+    command = 'pin -t {pt} -- {pp} {fn}.yuri'.format(
+        pt=sts.PINTOOL86_PATH, pp=file_path, fn=file_name)
     pwd = os.getcwd() + "\\"
 
     try:
@@ -65,7 +65,7 @@ def get_addr_opc_disa(file_path):
 
 if __name__ == '__main__':
     mp.freeze_support()
-    files_list = get_files_list(settings.PACKER_RAW_PATH)
+    files_list = get_files_list(sts.PACKER_RAW_PATH)
     print("Total Packer Count : {}".format(len(files_list)))
-    p = mp.Pool(settings.CPU_COUNT)
+    p = mp.Pool(sts.CPU_COUNT)
     p.map(get_addr_opc_disa, files_list)
