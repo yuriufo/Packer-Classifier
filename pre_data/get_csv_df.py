@@ -2,10 +2,11 @@
 # -*- coding: utf-8 -*-
 
 import os
-import csv
 import re
 import multiprocessing as mp
 import settings as sts
+
+import pandas as pd
 
 
 def get_files_list(Path):
@@ -18,18 +19,16 @@ def get_files_list(Path):
 
 
 def get_csv_opc_disa(file_path, save_csv_file):
-    with open(save_csv_file, "w", newline='') as csv_file:
-        writer = csv.writer(csv_file)
-        writer.writerow(["addr", "opc", "disa"])
-        with open(file_path, "r") as file_read:
-            for line in file_read:
-                matchObj = re.match(r'(.*) (.*) --> (.*)', line, re.I)
-                if matchObj:
-                    writer.writerow([
-                        matchObj.group(1),
-                        matchObj.group(2),
-                        matchObj.group(3)
-                    ])
+    datadict = {"addr": [], "opc": [], "disa": []}
+    with open(file_path, "r") as file_read:
+        for line in file_read:
+            matchObj = re.match(r'(.*) (.*) --> (.*)', line, re.I)
+            if matchObj:
+                datadict["addr"].append(matchObj.group(1))
+                datadict["opc"].append(matchObj.group(2))
+                datadict["disa"].append(matchObj.group(3))
+    df = pd.DataFrame(datadict)
+    df.to_csv(save_csv_file, index=False)
 
 
 def get_addr_opc_disa(file_path):
