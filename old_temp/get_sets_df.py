@@ -43,7 +43,9 @@ def get_csv_sets(file_path):
             file_csv = pd.read_csv(abs_file_path)
             opc_, disa_ = [], []
             for opc, disa in zip(file_csv.opc, file_csv.disa):
-                str_ = unhexlify(opc.ljust(16, "0")[:16])
+                str_ = unhexlify(
+                    opc.ljust(sts.IMAGES_Channel * 2,
+                              "0")[:sts.IMAGES_Channel * 2])
                 opc_.append([c for c in str_])
                 disa_.append(preprocess_text(disa).split(" "))
             datadict_opc["opc"].append(opc_)

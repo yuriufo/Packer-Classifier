@@ -8,6 +8,15 @@ def norm(dim):
     return nn.GroupNorm(min(32, dim), dim)
 
 
+class Flatten(nn.Module):
+    def __init__(self):
+        super(Flatten, self).__init__()
+
+    def forward(self, x):
+        shape = torch.prod(torch.tensor(x.shape[1:])).item()
+        return x.view(-1, shape)
+
+
 class ODEfunc(nn.Module):
     def __init__(self, dim):
         super(ODEfunc, self).__init__()
@@ -61,24 +70,23 @@ class ODEBlock(nn.Module):
 
 
 class ODEnet(nn.Module):
-    def __init__(self,
-                 in_channels,
-                 state_channels,
-                 output_classes,
-                 dropout_p,
-                 tol=1e-3):
+    def __init__(self, in_channels, state_channels, output_classes, tol=1e-3):
         super().__init__()
+
         self.downsampling_layers = nn.Sequential(
             nn.Conv2d(in_channels, state_channels, 3, 1), norm(state_channels),
             nn.ReLU(inplace=True),
             nn.Conv2d(state_channels, state_channels, 4, 2, 1),
             norm(state_channels), nn.ReLU(inplace=True),
             nn.Conv2d(state_channels, state_channels, 4, 2, 1))
+
         self.feature_layers = ODEBlock(
             ODEfunc(state_channels), rtol=tol, atol=tol)
+
         self.before_fc = nn.Sequential(
             norm(state_channels), nn.ReLU(inplace=True),
             nn.AdaptiveAvgPool2d((1, 1)))
+
         self.fc = nn.Linear(state_channels, output_classes)
 
     def forward(self, x, apply_softmax=False):

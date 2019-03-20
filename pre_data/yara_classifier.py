@@ -5,14 +5,12 @@ from yara import compile
 import os
 import shutil
 import settings as sts
-import json
-from collections import defaultdict
 
 
 class YaraCheck(object):
-    def __init__(self):
+    def __init__(self, rules_path):
         super(YaraCheck, self).__init__()
-        self.Rules = self.setRules(os.getcwd() + r"\pre_data\packer.yara")
+        self.Rules = self.setRules(os.getcwd() + rules_path)
 
     def setRules(self, path):
         yaraRule = compile(path)
@@ -52,9 +50,8 @@ def mycopyfile(srcfile, save_path, file_name):
 
 
 if __name__ == '__main__':
-    yc = YaraCheck()
-    other_dict = defaultdict(list)
-    for file_path, file_name in get_files_list(sts.PACKER_RAW_PATH):
+    yc = YaraCheck(r"\pre_data\packer.yara")
+    for file_path, file_name in get_files_list(r"F:\spider"):
         ans = clas_file(file_path, yc)
         # print(ans)
         if len(ans) == 0:
@@ -67,8 +64,3 @@ if __name__ == '__main__':
                 save_path = os.path.join(sts.CAL_MAL_PATH, packer)
                 mycopyfile(file_path, save_path, file_name)
                 break
-        else:
-            other_dict[file_name].append(ans)
-    else:
-        with open(os.path.join(sts.CAL_MAL_PATH, "other.json"), "w+") as f:
-            f.write(json.dumps(other_dict))
