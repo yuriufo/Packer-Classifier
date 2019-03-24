@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import os
 import torch
 from PIL import Image
 import numpy as np
+import json
+import matplotlib.pyplot as plt
 
 
 class RunningAverageMeter(object):
@@ -39,7 +42,10 @@ def update_train_state(model, train_state):
 
     # 至少保存一次模型
     if train_state['epoch_index'] == 0:
-        torch.save(model.state_dict(), train_state['model_filename'])
+        torch.save(
+            model.state_dict(),
+            os.path.join(train_state['save_dir'],
+                         train_state['model_filename']))
         train_state['stop_early'] = False
     # 如果模型性能表现有提升，再次保存
     else:
@@ -53,7 +59,10 @@ def update_train_state(model, train_state):
         else:
             # 保存最优的模型
             if loss_t < train_state['early_stopping_best_val']:
-                torch.save(model.state_dict(), train_state['model_filename'])
+                torch.save(
+                    model.state_dict(),
+                    os.path.join(train_state['save_dir'],
+                                 train_state['model_filename']))
 
             # 重置早停的步数
             train_state['early_stopping_step'] = 0
@@ -68,3 +77,39 @@ def img_to_array(fp):
     img = Image.open(fp)
     array = np.asarray(img, dtype="float32")
     return array
+
+
+def save_train_state(train_state, save_dir):
+    train_state["done_training"] = True
+    with open(save_dir, "w") as fp:
+        json.dump(train_state, fp)
+    print("---->>>  Training complete!")
+
+
+def plot_performance(train_state, save_dir, show_plot=True):
+    """ Plot loss and accuracy.
+    """
+    # Figure size
+    plt.figure(figsize=(15, 5))
+
+    # Plot Loss
+    plt.subplot(1, 2, 1)
+    plt.title("Loss")
+    plt.plot(train_state["train_loss"], label="train")
+    plt.plot(train_state["val_loss"], label="val")
+    plt.legend(loc='upper right')
+
+    # Plot Accuracy
+    plt.subplot(1, 2, 2)
+    plt.title("Accuracy")
+    plt.plot(train_state["train_acc"], label="train")
+    plt.plot(train_state["val_acc"], label="val")
+    plt.legend(loc='lower right')
+
+    # Save figure
+    plt.savefig(save_dir)
+
+    # Show plots
+    if show_plot:
+        print("---->>>   Metric plots:")
+        plt.show()

@@ -14,10 +14,10 @@ def get_files_list(Path):
 
 
 def main():
-    for path_, file_path in get_files_list(os.path.join(sts.PACKER_RAW_PATH, "UPX")):
+    for path_, file_path in get_files_list(os.path.join(sts.PACKER_RAW_PATH, "PE32")):
 
         sub_path = path_.replace(sts.PACKER_RAW_PATH, '')
-        save_csv_path = sts.PACKER_SAVE_CSV_PATH + sub_path
+        save_csv_path = sts.PACKER_SAVE_YURI_PATH + sub_path
         if not os.path.exists(save_csv_path):
             os.makedirs(save_csv_path)
 
@@ -30,6 +30,15 @@ def main():
             print(p.stdout.read())
         except Exception:
             print("{} get worry.".format(file_path))
+    else:
+        command = r'"E:\VMware\vmrun.exe" -T ws stop "D:\虚拟机\Win10\Windows 10 x64.vmx"'
+        try:
+            p = subprocess.Popen(command, shell=True)
+            p.wait()
+        except Exception:
+            print("exit worry.")
+        else:
+            print("all completed!")
 
 
 if __name__ == '__main__':

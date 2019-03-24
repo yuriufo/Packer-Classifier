@@ -3,7 +3,7 @@ if "%1"=="" goto HELP
 if not exist "%1" goto HELP
 
 
-set DELAY=10
+set DELAY=100
 set CWD=%CD%
 set VMRUN="E:\VMware\vmrun.exe"
 set VMX="D:\ÐéÄâ»ú\Win10\Windows 10 x64.vmx"

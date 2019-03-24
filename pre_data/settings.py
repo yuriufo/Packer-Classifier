@@ -5,21 +5,15 @@ import os
 
 # Packer Raw Path
 PACKER_RAW_PATH = os.path.normpath(
-    os.path.abspath(r'F:\Unpackme\PE32'))
+    os.path.abspath(r'F:\my_packer\Unpackme'))
 
-# Packer Save CSV Path
-PACKER_SAVE_CSV_PATH = os.path.normpath(
-    os.path.abspath(r'F:\train'))
+# Packer Save Yuri Path
+PACKER_SAVE_YURI_PATH = os.path.normpath(
+    os.path.abspath(r'F:\my_packer\my.yuri'))
 
 # Save PKI Sets Path
 SAVE_PKL_SETS_PATH = os.path.normpath(
-    os.path.abspath(r'F:\train_image'))
-
-# Pintool Path
-PINTOOL86_PATH = os.path.normpath(
-    os.path.abspath(r'F:\test\ximo_packer\ximo\PECompact2.X\itrace_x86.dll'))
-PINTOOL64_PATH = os.path.normpath(
-    os.path.abspath(r'F:\test\ximo_packer\ximo\PECompact2.X\itrace_x64.dll'))
+    os.path.abspath(r'F:\my_packer\train_image'))
 
 # Classifier Mal Path
 CAL_MAL_PATH = os.path.normpath(os.path.abspath(r'F:\Unpackme\cla'))

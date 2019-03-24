@@ -25,6 +25,7 @@ classes = {
 }
 
 
+# 词汇表：原始输入和数字形式的转换字典
 class Vocabulary(object):
     def __init__(self, token_to_idx=None):
 
@@ -73,6 +74,7 @@ class Vocabulary(object):
         return len(self.token_to_idx)
 
 
+# 序列化词汇表
 class SequenceVocabulary():
     def __init__(self, train_means, train_stds):
 
@@ -109,23 +111,24 @@ class SequenceVocabulary():
             self.train_means, self.train_stds)
 
 
+# 向量器：输入和输出的词汇表类实例，并为模型的训练和运行把数据向量化
 class ImageVectorizer(object):
-    def __init__(self, image_vocab, category_vocab):
+    def __init__(self, image_vocab, packer_vocab):
         self.image_vocab = image_vocab
-        self.category_vocab = category_vocab
+        self.packer_vocab = packer_vocab
 
     def vectorize(self, image):
 
-        # Avoid modifying the actual df
+        # 防止改变实际的df
         image = np.copy(image)
 
-        # Normalize
+        # 正则化
         for dim in range(3):
             mean = self.image_vocab.train_means[dim]
             std = self.image_vocab.train_stds[dim]
             image[:, :, dim] = ((image[:, :, dim] - mean) / std)
 
-        # Reshape frok (32, 32, 3) to (3, 32, 32)
+        # 把输入shape (a, a, b) 变为 (b, a, a)
         image = np.swapaxes(image, 0, 2)
         image = np.swapaxes(image, 1, 2)
 
@@ -133,35 +136,35 @@ class ImageVectorizer(object):
 
     @classmethod
     def from_dataframe(cls, df):
-        # Create class vocab
-        category_vocab = Vocabulary()
-        for category in sorted(set(df.category)):
-            category_vocab.add_token(category)
-        # Create image vocab
+        # 创建壳类别词汇表
+        packer_vocab = Vocabulary()
+        for packer in sorted(set(df.packer)):
+            packer_vocab.add_token(packer)
+        # 创建图像词汇表
         image_vocab = SequenceVocabulary.from_dataframe(df)
-        return cls(image_vocab, category_vocab)
+        return cls(image_vocab, packer_vocab)
 
     @classmethod
     def from_serializable(cls, contents):
         image_vocab = SequenceVocabulary.from_serializable(
             contents['image_vocab'])
-        category_vocab = Vocabulary.from_serializable(
-            contents['category_vocab'])
-        return cls(image_vocab=image_vocab, category_vocab=category_vocab)
+        packer_vocab = Vocabulary.from_serializable(contents['packer_vocab'])
+        return cls(image_vocab=image_vocab, packer_vocab=packer_vocab)
 
     def to_serializable(self):
         return {
             'image_vocab': self.image_vocab.to_serializable(),
-            'category_vocab': self.category_vocab.to_serializable()
+            'packer_vocab': self.packer_vocab.to_serializable()
         }
 
 
+# 数据集：用于处理和切分数据集的向量器
 class ImageDataset(Dataset):
     def __init__(self, df, vectorizer):
         self.df = df
         self.vectorizer = vectorizer
 
-        # Data splits
+        # 数据分割
         self.train_df = self.df[self.df.split == 'train']
         self.train_size = len(self.train_df)
         self.val_df = self.df[self.df.split == 'val']
@@ -175,11 +178,11 @@ class ImageDataset(Dataset):
         }
         self.set_split('train')
 
-        # Class weights (for imbalances)
-        class_counts = df.category.value_counts().to_dict()
+        # 分类权重（防止类别不平衡）
+        class_counts = df.packer.value_counts().to_dict()
 
         def sort_key(item):
-            return self.vectorizer.category_vocab.lookup_token(item[0])
+            return self.vectorizer.packer_vocab.lookup_token(item[0])
 
         sorted_counts = sorted(class_counts.items(), key=sort_key)
         frequencies = [count for _, count in sorted_counts]
@@ -218,9 +221,8 @@ class ImageDataset(Dataset):
     def __getitem__(self, index):
         row = self.target_df.iloc[index]
         image_vector = self.vectorizer.vectorize(row.image)
-        category_index = self.vectorizer.category_vocab.lookup_token(
-            row.category)
-        return {'image': image_vector, 'category': category_index}
+        packer_index = self.vectorizer.packer_vocab.lookup_token(row.packer)
+        return {'image': image_vector, 'packer': packer_index}
 
     def get_num_batches(self, batch_size):
         return len(self) // batch_size
@@ -242,26 +244,26 @@ class ImageDataset(Dataset):
             yield out_data_dict
 
 
-def get_datasets():
+def get_datasets(img_path):
     data = []
     for i, _class in enumerate(classes.values()):
-        for file in os.listdir(os.path.join(r"F:\train_image", _class)):
+        for file in os.listdir(os.path.join(img_path, _class)):
             if file.endswith(".png"):
-                full_filepath = os.path.join(r"F:\train_image", _class, file)
+                full_filepath = os.path.join(img_path, _class, file)
                 data.append({
                     "image": img_to_array(full_filepath),
-                    "category": _class
+                    "packer": _class
                 })
 
     df = pd.DataFrame(data)
     # print("Image shape:", df.image[0].shape)
 
-    by_category = collections.defaultdict(list)
+    by_packer = collections.defaultdict(list)
     for _, row in df.iterrows():
-        by_category[row.category].append(row.to_dict())
+        by_packer[row.packer].append(row.to_dict())
 
     final_list = []
-    for _, item_list in sorted(by_category.items()):
+    for _, item_list in sorted(by_packer.items()):
         if True:
             np.random.shuffle(item_list)
         n = len(item_list)
@@ -276,15 +278,14 @@ def get_datasets():
         for item in item_list[n_train + n_val:]:
             item['split'] = 'test'
 
-        # Add to final list
         final_list.extend(item_list)
 
     split_df = pd.DataFrame(final_list)
     # print(split_df.head())
 
-    # Dataset instance
+    # 数据库实例
     dataset = ImageDataset.load_dataset_and_make_vectorizer(split_df)
-    return split_df, dataset
+    return dataset
 
 
 if __name__ == '__main__':

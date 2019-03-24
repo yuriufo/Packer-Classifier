@@ -10,34 +10,32 @@ import torch.optim as optim
 
 import adabound
 
-import json
 import time
 import uuid
-import matplotlib.pyplot as plt
 
 from my_models.ODEnet import ODEfunc, ODEBlock, Flatten, norm
-from gadgets import compute_accuracy, update_train_state
+from gadgets import compute_accuracy, update_train_state, save_train_state, plot_performance
 
 from myDatasets import get_datasets
 
 # 参数
 config = {
-    "seed": 4396,
+    "seed": 7,
     "cuda": False,
     "shuffle": True,
     "experiment_id": None,
-    "data_file": "names.csv",
-    "split_data_file": "split_names.csv",
+    "train_state_file": "train_state.json",
     "vectorizer_file": "vectorizer.json",
     "model_state_file": "model.pth",
+    "performance_img": "performance.png",
     "save_dir": "experiments",
     "train_size": 0.7,
     "val_size": 0.15,
     "test_size": 0.15,
-    "num_epochs": 60,
+    "num_epochs": 30,
     "early_stopping_criteria": 5,
     "learning_rate": 1e-3,
-    "batch_size": 24
+    "batch_size": 18
 }
 
 
@@ -116,8 +114,9 @@ def init_ODEnet():
 
 
 class Trainer(object):
-    def __init__(self, dataset, model, model_file, device, shuffle, num_epochs,
-                 batch_size, learning_rate, early_stopping_criteria):
+    def __init__(self, dataset, model, save_dir, model_file, device, shuffle,
+                 num_epochs, batch_size, learning_rate,
+                 early_stopping_criteria):
         self.dataset = dataset
         self.class_weights = dataset.class_weights.to(device)
         self.model = model.to(device)
@@ -126,7 +125,8 @@ class Trainer(object):
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.loss_func = nn.CrossEntropyLoss(self.class_weights)
-        self.optimizer = adabound.AdaBound(self.model.parameters(), lr=learning_rate)  # 新的优化方法
+        self.optimizer = adabound.AdaBound(
+            self.model.parameters(), lr=learning_rate)  # 新的优化方法
         # self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer=self.optimizer, mode='min', factor=0.5, patience=1)
@@ -144,6 +144,7 @@ class Trainer(object):
             'val_acc': [],
             'test_loss': -1,
             'test_acc': -1,
+            'save_dir': save_dir,
             'model_filename': model_file,
             "f_nfe": [],
             "b_nfe": []
@@ -176,11 +177,11 @@ class Trainer(object):
                 y_pred = self.model(batch_dict['image'])
 
                 # 计算损失
-                loss = self.loss_func(y_pred, batch_dict['category'])
+                loss = self.loss_func(y_pred, batch_dict['packer'])
                 loss_t = loss.item()
                 running_loss += (loss_t - running_loss) / (batch_index + 1)
 
-                f_nfe = (self.model.nfe - f_nfe) / (batch_index + 1)
+                f_nfe += (self.model.nfe - f_nfe) / (batch_index + 1)
                 self.model.nfe = 0
 
                 # 反向传播
@@ -189,11 +190,11 @@ class Trainer(object):
                 # 更新梯度
                 self.optimizer.step()
 
-                b_nfe = (self.model.nfe - b_nfe) / (batch_index + 1)
+                b_nfe += (self.model.nfe - b_nfe) / (batch_index + 1)
                 self.model.nfe = 0
 
                 # 计算准确率
-                acc_t = compute_accuracy(y_pred, batch_dict['category'])
+                acc_t = compute_accuracy(y_pred, batch_dict['packer'])
                 running_acc += (acc_t - running_acc) / (batch_index + 1)
 
             self.train_state['train_loss'].append(running_loss)
@@ -219,12 +220,12 @@ class Trainer(object):
                 y_pred = self.model(batch_dict['image'])
 
                 # 计算损失
-                loss = self.loss_func(y_pred, batch_dict['category'])
+                loss = self.loss_func(y_pred, batch_dict['packer'])
                 loss_t = loss.to("cpu").item()
                 running_loss += (loss_t - running_loss) / (batch_index + 1)
 
                 # 计算准确率
-                acc_t = compute_accuracy(y_pred, batch_dict['category'])
+                acc_t = compute_accuracy(y_pred, batch_dict['packer'])
                 running_acc += (acc_t - running_acc) / (batch_index + 1)
 
             self.train_state['val_loss'].append(running_loss)
@@ -252,12 +253,12 @@ class Trainer(object):
             y_pred = self.model(batch_dict['image'])
 
             # 计算损失
-            loss = self.loss_func(y_pred, batch_dict['category'])
+            loss = self.loss_func(y_pred, batch_dict['packer'])
             loss_t = loss.item()
             running_loss += (loss_t - running_loss) / (batch_index + 1)
 
             # 计算准确率
-            acc_t = compute_accuracy(y_pred, batch_dict['category'])
+            acc_t = compute_accuracy(y_pred, batch_dict['packer'])
             running_acc += (acc_t - running_acc) / (batch_index + 1)
 
         self.train_state['test_loss'] = running_loss
@@ -269,53 +270,19 @@ class Trainer(object):
         print("Test Accuracy: {0:.1f}%".format(self.train_state['test_acc']))
 
 
-def plot_performance(train_state, save_dir, show_plot=True):
-    """ Plot loss and accuracy.
-    """
-    # Figure size
-    plt.figure(figsize=(15, 5))
-
-    # Plot Loss
-    plt.subplot(1, 2, 1)
-    plt.title("Loss")
-    plt.plot(train_state["train_loss"], label="train")
-    plt.plot(train_state["val_loss"], label="val")
-    plt.legend(loc='upper right')
-
-    # Plot Accuracy
-    plt.subplot(1, 2, 2)
-    plt.title("Accuracy")
-    plt.plot(train_state["train_acc"], label="train")
-    plt.plot(train_state["val_acc"], label="val")
-    plt.legend(loc='lower right')
-
-    # Save figure
-    plt.savefig(os.path.join(save_dir, "performance.png"))
-
-    # Show plots
-    if show_plot:
-        print("---->>>   Metric plots:")
-        plt.show()
-
-
-def save_train_state(train_state, save_dir):
-    train_state["done_training"] = True
-    with open(os.path.join(save_dir, "train_state.json"), "w") as fp:
-        json.dump(train_state, fp)
-    print("---->>>  Training complete!")
-
-
 def train():
-    split_df, dataset = get_datasets()
-    dataset.save_vectorizer(config["vectorizer_file"])
+    dataset = get_datasets(r"F:\my_packer\train_image")
+    dataset.save_vectorizer(
+        os.path.join(config["save_dir"], config["vectorizer_file"]))
     vectorizer = dataset.vectorizer
     model = my_ODEnet(
-        input_dim=3, output_dim=len(vectorizer.category_vocab), state_dim=64)
+        input_dim=3, output_dim=len(vectorizer.packer_vocab), state_dim=64)
     print(model.named_modules)
 
     trainer = Trainer(
         dataset=dataset,
         model=model,
+        save_dir=config["save_dir"],
         model_file=config["model_state_file"],
         device=config["device"],
         shuffle=config["shuffle"],
@@ -323,14 +290,19 @@ def train():
         batch_size=config["batch_size"],
         learning_rate=config["learning_rate"],
         early_stopping_criteria=config["early_stopping_criteria"])
+
     trainer.run_train_loop()
+
     plot_performance(
         train_state=trainer.train_state,
-        save_dir=config["save_dir"],
+        save_dir=os.path.join(config["save_dir"], config["performance_img"]),
         show_plot=True)
+
     trainer.run_test_loop()
+
     save_train_state(
-        train_state=trainer.train_state, save_dir=config["save_dir"])
+        train_state=trainer.train_state,
+        save_dir=os.path.join(config["save_dir"], config["train_state_file"]))
 
 
 def main():
