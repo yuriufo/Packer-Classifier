@@ -1,29 +1,37 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os
+from pathlib import Path
 from pre_data import settings as sts
 import subprocess
 
 # 参数
 config = {
-    "timueout": 50,
-    "vmrun_path": r"E:\VMware\vmrun.exe",
-    "vmx_path": r"D:\虚拟机\Win10\Windows 10 x64.vmx",
-    "vm_snapshot": r"real",
-    "vm_user": r"msi",
-    "vm_pass": r"123456",
-    "script_path": r"C:\Users\msi\Desktop\my_sandbox_script.py",
-    "python_path": r"C:\Users\msi\AppData\Local\Programs\Python\Python35\python.exe",
-    "malware_path": r"C:\Malware"
+    "timueout":
+    50,
+    "vmrun_path":
+    Path(r"E:\VMware\vmrun.exe"),
+    "vmx_path":
+    Path(r"D:\虚拟机\Win10\Windows 10 x64.vmx"),
+    "vm_snapshot":
+    r"real",
+    "vm_user":
+    r"msi",
+    "vm_pass":
+    r"123456",
+    "script_path":
+    Path(r"C:\Users\msi\Desktop\my_sandbox_script.py"),
+    "python_path":
+    Path(r"C:\Users\msi\AppData\Local\Programs\Python\Python35\python.exe"),
+    "malware_path":
+    Path(r"C:\Malware")
 }
 
 
-def get_files_list(Path):
-    for root, _, files in os.walk(Path):
-        for name in files:
-            abs_file_path = os.path.join(root, name)
-            yield root, abs_file_path, name
+def get_files_list(path):
+    for dir_ in path.rglob("*"):
+        if dir_.is_file():
+            yield dir_, dir_.name
 
 
 def revertToSnapshot():
@@ -43,8 +51,7 @@ def start():
 def copyFileFromHostToGuest(file_path, file_name):
     command = '{0} -gu {1} -gp {2} copyFileFromHostToGuest "{3}" "{4}" "{5}"'.format(
         config["vmrun_path"], config["vm_user"], config["vm_pass"],
-        config["vmx_path"], file_path,
-        os.path.join(config["malware_path"], file_name))
+        config["vmx_path"], file_path, config["malware_path"] / file_name)
     p = subprocess.Popen(command, shell=True)
     p.wait()
 
@@ -61,9 +68,8 @@ def runProgramInGuest(file_name):
 def copyFileFromGuestToHost(save_path, file_name):
     command = '{0} -gu {1} -gp {2} copyFileFromGuestToHost "{3}" "{4}" "{5}"'.format(
         config["vmrun_path"], config["vm_user"], config["vm_pass"],
-        config["vmx_path"],
-        os.path.join(config["malware_path"], file_name + ".yuri"),
-        os.path.join(save_path, file_name))
+        config["vmx_path"], config["malware_path"] / (file_name + ".yuri"),
+        save_path / file_name)
     p = subprocess.Popen(command, shell=True)
     p.wait()
 
@@ -76,13 +82,13 @@ def stop():
 
 
 def main():
-    for path_, file_path, file_name in get_files_list(
-            os.path.join(sts.PACKER_RAW_PATH, "PE32\\FSG")):
+    for file_path, file_name in get_files_list(
+            sts.PACKER_RAW_PATH / r"PE32\FSG"):
 
-        sub_path = path_.replace(sts.PACKER_RAW_PATH, '')
-        save_path = sts.PACKER_SAVE_YURI_PATH + sub_path
-        if not os.path.exists(save_path):
-            os.makedirs(save_path)
+        sub_path = file_path.parents.relative_to(sts.PACKER_RAW_PATH)
+        save_path = sts.PACKER_SAVE_YURI_PATH / sub_path
+        if not save_path.exists():
+            save_path.mkdir(parents=True)
 
         try:
             revertToSnapshot()

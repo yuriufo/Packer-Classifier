@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 
 from gadgets import img_to_array
-import os
 import pandas as pd
 import collections
 import numpy as np
 import json
 from torch.utils.data import Dataset, DataLoader
 import torch
+import pre_data.settings as sts
 
 # Classes
 classes = {
@@ -25,7 +25,7 @@ classes = {
 }
 
 
-# 词汇表：原始输入和数字形式的转换字典
+# 词汇表：原始输入和数字形式的转换字典，用于壳类型
 class Vocabulary(object):
     def __init__(self, token_to_idx=None):
 
@@ -74,7 +74,7 @@ class Vocabulary(object):
         return len(self.token_to_idx)
 
 
-# 序列化词汇表
+# 序列化词汇表：实际图像的词汇表，存储标准差与平均值
 class SequenceVocabulary():
     def __init__(self, train_means, train_stds):
 
@@ -111,7 +111,7 @@ class SequenceVocabulary():
             self.train_means, self.train_stds)
 
 
-# 向量器：输入和输出的词汇表类实例，并为模型的训练和运行把数据向量化
+# 向量器：输入和输出的词汇表类实例，使用词汇表标准化图像
 class ImageVectorizer(object):
     def __init__(self, image_vocab, packer_vocab):
         self.image_vocab = image_vocab
@@ -158,7 +158,7 @@ class ImageVectorizer(object):
         }
 
 
-# 数据集：用于处理和切分数据集的向量器
+# 数据集：提供向量化数据
 class ImageDataset(Dataset):
     def __init__(self, df, vectorizer):
         self.df = df
@@ -200,11 +200,11 @@ class ImageDataset(Dataset):
         return cls(df, vectorizer)
 
     def load_vectorizer_only(vectorizer_filepath):
-        with open(vectorizer_filepath) as fp:
+        with vectorizer_filepath.open() as fp:
             return ImageVectorizer.from_serializable(json.load(fp))
 
     def save_vectorizer(self, vectorizer_filepath):
-        with open(vectorizer_filepath, "w") as fp:
+        with vectorizer_filepath.open("w") as fp:
             json.dump(self.vectorizer.to_serializable(), fp)
 
     def set_split(self, split="train"):
@@ -244,19 +244,17 @@ class ImageDataset(Dataset):
             yield out_data_dict
 
 
-def get_datasets(img_path):
+def get_datasets(img_path=sts.SAVE_IMAGES_PATH):
     data = []
     for i, _class in enumerate(classes.values()):
-        for file in os.listdir(os.path.join(img_path, _class)):
-            if file.endswith(".png"):
-                full_filepath = os.path.join(img_path, _class, file)
-                data.append({
-                    "image": img_to_array(full_filepath),
-                    "packer": _class
-                })
+        for file in (img_path/_class).glob("*.png"):
+            full_filepath = img_path/_class/file
+            data.append({
+                "image": img_to_array(full_filepath),
+                "packer": _class
+            })
 
     df = pd.DataFrame(data)
-    # print("Image shape:", df.image[0].shape)
 
     by_packer = collections.defaultdict(list)
     for _, row in df.iterrows():
@@ -289,4 +287,4 @@ def get_datasets(img_path):
 
 
 if __name__ == '__main__':
-    get_datasets()
+    print(get_datasets().class_weights)

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from yara import compile
-import os
+from pathlib import Path
 import shutil
 import settings as sts
 
@@ -10,14 +10,14 @@ import settings as sts
 class YaraCheck(object):
     def __init__(self, rules_path):
         super(YaraCheck, self).__init__()
-        self.Rules = self.setRules(os.getcwd() + rules_path)
+        self.Rules = self.setRules(str(Path(r"\pre_data\packer.yar")))
 
     def setRules(self, path):
         yaraRule = compile(path)
         return yaraRule
 
     def scan(self, filename):
-        with open(filename, "rb") as fin:
+        with filename.open("rb") as fin:
             bdata = fin.read()
         matches = self.Rules.match(data=bdata)
         # print matches
@@ -26,11 +26,11 @@ class YaraCheck(object):
         return [i.rule for i in matches]
 
 
-def get_files_list(Path):
-    for root, _, files in os.walk(Path):
-        for name in files:
-            abs_file_path = os.path.join(root, name)
-            yield abs_file_path, name
+def get_files_list(path):
+    p = Path(path)
+    for abs_file_path in p.rglob("*"):
+        if abs_file_path.is_file():
+            yield abs_file_path
 
 
 def clas_file(file_path, yc):
@@ -40,18 +40,18 @@ def clas_file(file_path, yc):
         return None
 
 
-def mycopyfile(srcfile, save_path, file_name):
+def mycopyfile(srcfile, save_path):
     try:
-        if not os.path.exists(save_path):
-            os.makedirs(save_path)
-        shutil.copyfile(srcfile, os.path.join(save_path, file_name))
+        if not save_path.exists():
+            save_path.mkdir(parents=True)
+        shutil.copyfile(srcfile, save_path / (srcfile.name))
     except Exception:
         pass
 
 
 if __name__ == '__main__':
-    yc = YaraCheck(r"\pre_data\packer.yara")
-    for file_path, file_name in get_files_list(r"F:\spider"):
+    yc = YaraCheck()
+    for file_path in get_files_list(r"F:\spider"):
         ans = clas_file(file_path, yc)
         # print(ans)
         if len(ans) == 0:
@@ -61,6 +61,6 @@ if __name__ == '__main__':
             if packer.lower() in ams_l:
                 if packer == "ASProtect" and "yoda" in ams_l:
                     continue
-                save_path = os.path.join(sts.CAL_MAL_PATH, packer)
-                mycopyfile(file_path, save_path, file_name)
+                save_path = sts.CAL_MAL_PATH / packer
+                mycopyfile(file_path, save_path)
                 break

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -23,16 +23,15 @@ config = {
     "seed": 7,
     "cuda": False,
     "shuffle": True,
-    "experiment_id": None,
     "train_state_file": "train_state.json",
     "vectorizer_file": "vectorizer.json",
     "model_state_file": "model.pth",
     "performance_img": "performance.png",
-    "save_dir": "experiments",
+    "save_dir": Path.cwd()/"experiments",
     "train_size": 0.7,
     "val_size": 0.15,
     "test_size": 0.15,
-    "num_epochs": 30,
+    "num_epochs": 5,
     "early_stopping_criteria": 5,
     "learning_rate": 1e-3,
     "batch_size": 18
@@ -55,8 +54,8 @@ def set_seeds(seed, cuda):
 
 # 创建目录
 def create_dirs(dirpath):
-    if not os.path.exists(dirpath):
-        os.makedirs(dirpath)
+    if not dirpath.exists():
+        dirpath.mkdir(parents=True)
 
 
 # (W-F+2P)/S
@@ -98,8 +97,6 @@ class my_ODEnet(nn.Module):
 
 
 def init_ODEnet():
-    # 新建保存文件路径
-    create_dirs(config["save_dir"])
     print("---->>>   Created {}".format(config["save_dir"]))
     # 设置种子
     set_seeds(seed=config["seed"], cuda=config["cuda"])
@@ -110,6 +107,8 @@ def init_ODEnet():
     print("---->>>   Using CUDA: {}".format(config["cuda"]))
     # 设置当前实验ID
     config["experiment_id"] = generate_unique_id()
+    config["save_dir"] = config["save_dir"]/config["experiment_id"]
+    create_dirs(config["save_dir"])
     print("---->>>   Generated unique id: {0}".format(config["experiment_id"]))
 
 
@@ -271,9 +270,8 @@ class Trainer(object):
 
 
 def train():
-    dataset = get_datasets(r"F:\my_packer\train_image")
-    dataset.save_vectorizer(
-        os.path.join(config["save_dir"], config["vectorizer_file"]))
+    dataset = get_datasets()
+    dataset.save_vectorizer(config["save_dir"]/config["vectorizer_file"])
     vectorizer = dataset.vectorizer
     model = my_ODEnet(
         input_dim=3, output_dim=len(vectorizer.packer_vocab), state_dim=64)
@@ -295,14 +293,14 @@ def train():
 
     plot_performance(
         train_state=trainer.train_state,
-        save_dir=os.path.join(config["save_dir"], config["performance_img"]),
+        save_dir=config["save_dir"]/config["performance_img"],
         show_plot=True)
 
     trainer.run_test_loop()
 
     save_train_state(
         train_state=trainer.train_state,
-        save_dir=os.path.join(config["save_dir"], config["train_state_file"]))
+        save_dir=config["save_dir"]/config["train_state_file"])
 
 
 def main():

@@ -1,26 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os
+from pathlib import Path
 
 # Packer Raw Path
-PACKER_RAW_PATH = os.path.normpath(
-    os.path.abspath(r'F:\my_packer\Unpackme'))
+PACKER_RAW_PATH = Path(r'F:\my_packer\Unpackme')
 
 # Packer Save Yuri Path
-PACKER_SAVE_YURI_PATH = os.path.normpath(
-    os.path.abspath(r'F:\my_packer\my.yuri'))
+PACKER_SAVE_YURI_PATH = Path(r'F:\my_packer\my.yuri')
 
-# Save PKI Sets Path
-SAVE_PKL_SETS_PATH = os.path.normpath(
-    os.path.abspath(r'F:\my_packer\train_image'))
+# Save Images Path
+SAVE_IMAGES_PATH = Path(r'F:\my_packer\train_image')
 
 # Classifier Mal Path
-CAL_MAL_PATH = os.path.normpath(os.path.abspath(r'F:\Unpackme\cla'))
-
-# Batch Path
-BATCH_PATH = os.path.normpath(
-    os.path.abspath(r'F:\course\gp\Packer-Classifier\pre_data\my_batch.bat'))
+CAL_MAL_PATH = Path(r'F:\Unpackme\cla')
 
 # Images Channel
 IMAGES_Channel = 3

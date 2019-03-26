@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os
+from __future__ import unicode_literals, print_function, division
+
 import torch
 from PIL import Image
 import numpy as np
@@ -44,8 +45,7 @@ def update_train_state(model, train_state):
     if train_state['epoch_index'] == 0:
         torch.save(
             model.state_dict(),
-            os.path.join(train_state['save_dir'],
-                         train_state['model_filename']))
+            str(train_state['save_dir'] / train_state['model_filename']))
         train_state['stop_early'] = False
     # 如果模型性能表现有提升，再次保存
     else:
@@ -61,8 +61,8 @@ def update_train_state(model, train_state):
             if loss_t < train_state['early_stopping_best_val']:
                 torch.save(
                     model.state_dict(),
-                    os.path.join(train_state['save_dir'],
-                                 train_state['model_filename']))
+                    str(train_state['save_dir'] /
+                        train_state['model_filename']))
 
             # 重置早停的步数
             train_state['early_stopping_step'] = 0
@@ -81,7 +81,8 @@ def img_to_array(fp):
 
 def save_train_state(train_state, save_dir):
     train_state["done_training"] = True
-    with open(save_dir, "w") as fp:
+    train_state['save_dir'] = str(train_state['save_dir'])
+    with save_dir.open("w") as fp:
         json.dump(train_state, fp)
     print("---->>>  Training complete!")
 
@@ -107,7 +108,7 @@ def plot_performance(train_state, save_dir, show_plot=True):
     plt.legend(loc='lower right')
 
     # Save figure
-    plt.savefig(save_dir)
+    plt.savefig(str(save_dir))
 
     # Show plots
     if show_plot:
