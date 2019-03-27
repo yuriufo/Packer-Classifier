@@ -27,7 +27,7 @@ config = {
     "vectorizer_file": "vectorizer.json",
     "model_state_file": "model.pth",
     "performance_img": "performance.png",
-    "save_dir": Path.cwd()/"experiments",
+    "save_dir": Path.cwd() / "experiments",
     "train_size": 0.7,
     "val_size": 0.15,
     "test_size": 0.15,
@@ -96,7 +96,8 @@ class my_ODEnet(nn.Module):
         self.feature_layers.nfe = value
 
 
-def init_ODEnet():
+def init():
+    print("---->>>   PyTorch version: {}".format(torch.__version__))
     print("---->>>   Created {}".format(config["save_dir"]))
     # 设置种子
     set_seeds(seed=config["seed"], cuda=config["cuda"])
@@ -105,9 +106,12 @@ def init_ODEnet():
     config["cuda"] = True if torch.cuda.is_available() else False
     config["device"] = torch.device("cuda" if config["cuda"] else "cpu")
     print("---->>>   Using CUDA: {}".format(config["cuda"]))
+    if config["cuda"] is True:
+        print("---->>>   CUDA version: {}".format(torch.version.cuda))
+        print("---->>>   GPU type: {}".format(torch.cuda.get_device_name(0)))
     # 设置当前实验ID
     config["experiment_id"] = generate_unique_id()
-    config["save_dir"] = config["save_dir"]/config["experiment_id"]
+    config["save_dir"] = config["save_dir"] / config["experiment_id"]
     create_dirs(config["save_dir"])
     print("---->>>   Generated unique id: {0}".format(config["experiment_id"]))
 
@@ -271,7 +275,7 @@ class Trainer(object):
 
 def train():
     dataset = get_datasets()
-    dataset.save_vectorizer(config["save_dir"]/config["vectorizer_file"])
+    dataset.save_vectorizer(config["save_dir"] / config["vectorizer_file"])
     vectorizer = dataset.vectorizer
     model = my_ODEnet(
         input_dim=3, output_dim=len(vectorizer.packer_vocab), state_dim=64)
@@ -293,19 +297,20 @@ def train():
 
     plot_performance(
         train_state=trainer.train_state,
-        save_dir=config["save_dir"]/config["performance_img"],
+        save_dir=config["save_dir"] / config["performance_img"],
         show_plot=True)
 
     trainer.run_test_loop()
 
     save_train_state(
         train_state=trainer.train_state,
-        save_dir=config["save_dir"]/config["train_state_file"])
+        save_dir=config["save_dir"] / config["train_state_file"])
 
 
 def main():
-    init_ODEnet()
+    init()
     train()
+    torch.cuda.empty_cache()
 
 
 if __name__ == '__main__':
