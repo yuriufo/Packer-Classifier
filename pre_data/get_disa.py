@@ -36,11 +36,11 @@ def array_to_img(fp, opc):
     img.save(fp)
 
 
-def get_images(file_path):
+def get_disa(file_path):
     sub_file_path = file_path.relative_to(sts.PACKER_SAVE_YURI_PATH)
-    save_images_path = sts.SAVE_IMAGES_PATH / sub_file_path
-    if not save_images_path.exists():
-        save_images_path.mkdir(parents=True)
+    save_disa_path = sts.SAVE_DISA_PATH / sub_file_path
+    if not save_disa_path.exists():
+        save_disa_path.mkdir(parents=True)
 
     for abs_file_path in file_path.glob("*"):
         if not abs_file_path.is_file():
@@ -49,12 +49,12 @@ def get_images(file_path):
         opc_ = []
         for opc in file_pd.opc:
             str_ = unhexlify(
-                opc.ljust(sts.IMAGES_Channel * 2,
-                          "0")[:sts.IMAGES_Channel * 2])
+                opc.ljust(sts.DISA_SIZE * 2, "0")[:sts.DISA_SIZE * 2])
             opc_.append([c for c in str_])
         while len(opc_) < 1024:
             opc_.append([0, 0, 0])
-        array_to_img(save_images_path / abs_file_path.with_suffix(".png").name, opc_)
+        array_to_img(save_disa_path / abs_file_path.with_suffix(".png").name,
+                     opc_)
 
 
 def main():
@@ -62,7 +62,7 @@ def main():
     sub_path_list = get_sub_path_list(sts.PACKER_SAVE_YURI_PATH)
     # print(sub_path_list)
     p = mp.Pool(sts.CPU_COUNT)
-    p.map(get_images, sub_path_list)
+    p.map(get_disa, sub_path_list)
 
 
 if __name__ == '__main__':

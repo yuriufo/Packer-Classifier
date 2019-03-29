@@ -14,6 +14,7 @@ import time
 import uuid
 
 from my_models.ODEnet import ODEfunc, ODEBlock, Flatten, norm
+from my_models.my_transformer import ST
 from gadgets import compute_accuracy, update_train_state, save_train_state, plot_performance
 
 from myDatasets import get_datasets
@@ -31,10 +32,10 @@ config = {
     "train_size": 0.7,
     "val_size": 0.15,
     "test_size": 0.15,
-    "num_epochs": 5,
+    "num_epochs": 40,
     "early_stopping_criteria": 5,
     "learning_rate": 1e-3,
-    "batch_size": 18
+    "batch_size": 24
 }
 
 
@@ -65,6 +66,8 @@ class my_ODEnet(nn.Module):
     def __init__(self, input_dim, state_dim, output_dim, tol=1e-3):
         super(my_ODEnet, self).__init__()
         # 输入shape：(3,32,32)
+        self.transformer = ST()
+
         self.downsampling_layers = nn.Sequential(
             nn.Conv2d(input_dim, state_dim, 3, 1), norm(state_dim),
             nn.ReLU(inplace=True), nn.Conv2d(state_dim, state_dim, 4, 2, 1),
@@ -78,6 +81,7 @@ class my_ODEnet(nn.Module):
             Flatten(), nn.Linear(state_dim, output_dim))
 
     def forward(self, x_in, apply_softmax=False):
+        out = self.transformer(x_in)
         out = self.downsampling_layers(x_in)
         out = self.feature_layers(out)
         out = self.fc_layers(out)
