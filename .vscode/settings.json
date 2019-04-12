@@ -1,5 +1,5 @@
 {
-    "python.pythonPath": "C:\\Python35\\python.exe",
+    "python.pythonPath": "C:\\Python35\\python3.exe",
     "python.linting.pylintArgs": ["--generate-members"],
     "python.linting.flake8Args": ["--max-line-length=248"]
 }
