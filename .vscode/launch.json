@@ -9,7 +9,8 @@
             "type": "python",
             "request": "launch",
             "program": "${file}",
-            "console": "none"
+            "console": "none",
+            "env": {"PYTHONPATH":"${workspaceRoot}"}
         },
         {
             "name": "Python: Remote Attach",

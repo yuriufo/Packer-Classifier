@@ -8,6 +8,8 @@ from PIL import Image
 import numpy as np
 import json
 import matplotlib.pyplot as plt
+import torch
+from sklearn.metrics import confusion_matrix
 
 
 class RunningAverageMeter(object):
@@ -66,6 +68,7 @@ def update_train_state(model, train_state):
 
             # 重置早停的步数
             train_state['early_stopping_step'] = 0
+            train_state['early_stopping_best_val'] = loss_t
 
         # 是否需要早停
         train_state['stop_early'] = train_state[
@@ -112,5 +115,11 @@ def plot_performance(train_state, save_dir, show_plot=True):
 
     # Show plots
     if show_plot:
-        print("---->>>   Metric plots:")
+        # print("---->>>   Metric plots:")
         plt.show()
+
+
+def Confusion_matrix(y_pred, y_target):
+    cm = confusion_matrix([i.cpu().numpy().tolist() for i in y_target],
+                          [i.cpu().numpy().tolist() for i in y_pred])
+    print(cm)

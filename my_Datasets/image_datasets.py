@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-from gadgets import img_to_array
+from __future__ import unicode_literals, print_function, division
+
 import pandas as pd
 import collections
 import numpy as np
@@ -10,19 +11,10 @@ from torch.utils.data import Dataset, DataLoader
 import torch
 import pre_data.settings as sts
 
+__all__ = ["get_image_datasets"]
+
 # Classes
-classes = {
-    0: 'ACProtect',
-    1: 'Armadillo',
-    2: 'ASProtect',
-    3: 'ExeCryptor',
-    4: 'ExeShield',
-    5: 'Obsidium',
-    6: 'PeCompact',
-    7: 'PELock',
-    8: 'Themida',
-    9: 'UPX'
-}
+classes = sts.PACKERS_LANDSPACE
 
 
 # 词汇表：原始输入和数字形式的转换字典，用于壳类型
@@ -64,11 +56,12 @@ class Vocabulary(object):
 
     def lookup_index(self, index):
         if index not in self.idx_to_token:
-            raise KeyError("the index (%d) is not in the Vocabulary" % index)
+            raise KeyError(
+                "the index {0} is not in the Vocabulary".format(index))
         return self.idx_to_token[index]
 
     def __str__(self):
-        return "<Vocabulary(size=%d)>" % len(self)
+        return "<Vocabulary(size={0})>".format(len(self))
 
     def __len__(self):
         return len(self.token_to_idx)
@@ -244,29 +237,33 @@ class ImageDataset(Dataset):
             yield out_data_dict
 
 
-def get_datasets(img_path=sts.SAVE_IMAGES_PATH):
-    data = []
-    for i, _class in enumerate(classes.values()):
-        for file in (img_path/_class).glob("*.png"):
-            full_filepath = img_path/_class/file
-            data.append({
-                "image": img_to_array(full_filepath),
-                "packer": _class
-            })
+def get_image_datasets(csv_path=sts.SAVE_CSV_PATH / "train_data.pkl",
+                       randam_seed=None,
+                       state_size=[0.7, 0.15, 0.15],
+                       vectorize=None):
 
-    df = pd.DataFrame(data)
+    if np.sum(state_size) != 1.0 or any([i < 0 for i in state_size]):
+        raise Exception("np.sum({0}) != 1 or not integer".format(state_size))
+
+    train_df = pd.read_pickle(csv_path)
+    df = train_df[['image', 'packer']]
 
     by_packer = collections.defaultdict(list)
     for _, row in df.iterrows():
         by_packer[row.packer].append(row.to_dict())
 
+    # print("---->>>   packer:")
+    # for packer in by_packer:
+    #     print("{0}: {1}".format(packer, len(by_packer[packer])))
+
     final_list = []
     for _, item_list in sorted(by_packer.items()):
-        if True:
+        if randam_seed is not None:
+            np.random.seed(randam_seed)
             np.random.shuffle(item_list)
         n = len(item_list)
-        n_train = int(0.7 * n)
-        n_val = int(0.15 * n)
+        n_train = int(state_size[0] * n)
+        n_val = int(state_size[1] * n)
 
         # 给数据点一个切分属性
         for item in item_list[:n_train]:
@@ -282,9 +279,21 @@ def get_datasets(img_path=sts.SAVE_IMAGES_PATH):
     # print(split_df.head())
 
     # 数据库实例
-    dataset = ImageDataset.load_dataset_and_make_vectorizer(split_df)
+    if vectorize is None:
+        dataset = ImageDataset.load_dataset_and_make_vectorizer(split_df)
+    else:
+        dataset = ImageDataset.load_dataset_and_load_vectorizer(
+            split_df, vectorize)
     return dataset
 
 
 if __name__ == '__main__':
-    print(get_datasets().class_weights)
+    datasets = get_image_datasets(randam_seed=22)
+    vector = datasets.vectorizer
+
+    print(vector.image_vocab)
+    print(vector.packer_vocab)
+    print(datasets)
+    input_ = datasets[10]  # __getitem__
+    print(input_['image'].shape)
+    print(datasets.class_weights)

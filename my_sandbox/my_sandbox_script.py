@@ -11,9 +11,10 @@ import pefile
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-t', '--timeout', default=10, type=int)
-    parser.add_argument('-f', '--filename', required=True)
-    parser.add_argument('-o', '--output', default=r"C:\Users\msi\Desktop")
+    parser.add_argument('-t', '--timeout', default=10, type=int)  # 超时时间
+    parser.add_argument('-f', '--filename', required=True)  # 文件名
+    parser.add_argument(
+        '-o', '--output', default=r"C:\Users\msi\Desktop")  # 输出路径
     args = parser.parse_args()
 
     message = "error"
@@ -21,15 +22,18 @@ def main():
     file_path = "C:\\Malware\\" + args.filename
     try:
         pe = pefile.PE(file_path, fast_load=True)
+        # 判断是否为DLL
         if pe.FILE_HEADER.IMAGE_FILE_DLL is True:
             message = "this is dll"
             command = ""
+        # 判断是32位还是64位
         elif pe.FILE_HEADER.IMAGE_FILE_32BIT_MACHINE is True:
             command = "pin -t {pt32} -o {fn}.yuri -- {fn}".format(
                 pt32=r"C:\pin-3.7\itrace_x86.dll", fn=file_path)
         else:
             command = "pin -t {pt64} -o {fn}.yuri -- {fn}".format(
                 pt64=r"C:\pin-3.7\itrace_x64.dll", fn=file_path)
+    # 出现异常，不是PE文件
     except Exception:
         message = "this is not PE"
 

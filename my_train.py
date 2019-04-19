@@ -15,13 +15,13 @@ import uuid
 
 from my_models.ODEnet import ODEfunc, ODEBlock, Flatten, norm
 from my_models.my_transformer import ST
-from gadgets import compute_accuracy, update_train_state, save_train_state, plot_performance
+from gadgets.ggs import compute_accuracy, update_train_state, save_train_state, plot_performance, Confusion_matrix
 
-from myDatasets import get_datasets
+from my_Datasets.image_datasets import get_image_datasets
 
 # 参数
 config = {
-    "seed": 7,
+    "seed": 7777,
     "cuda": False,
     "shuffle": True,
     "train_state_file": "train_state.json",
@@ -29,20 +29,18 @@ config = {
     "model_state_file": "model.pth",
     "performance_img": "performance.png",
     "save_dir": Path.cwd() / "experiments",
-    "train_size": 0.7,
-    "val_size": 0.15,
-    "test_size": 0.15,
-    "num_epochs": 40,
-    "early_stopping_criteria": 5,
-    "learning_rate": 1e-3,
-    "batch_size": 24
+    "state_size": [0.6, 0.25, 0.15],
+    "batch_size": 36,
+    "num_epochs": 15,
+    "early_stopping_criteria": 3,
+    "learning_rate": 1e-3
 }
 
 
 # 生成唯一ID
 def generate_unique_id():
     timestamp = int(time.time())
-    unique_id = "{}_{}".format(timestamp, uuid.uuid1())
+    unique_id = "{0}_{1}".format(timestamp, uuid.uuid1())
     return unique_id
 
 
@@ -228,7 +226,7 @@ class Trainer(object):
 
                 # 计算损失
                 loss = self.loss_func(y_pred, batch_dict['packer'])
-                loss_t = loss.to("cpu").item()
+                loss_t = loss.item()
                 running_loss += (loss_t - running_loss) / (batch_index + 1)
 
                 # 计算准确率
@@ -255,6 +253,9 @@ class Trainer(object):
         running_acc = 0.0
         self.model.eval()
 
+        all_pred = []
+        all_pack = []
+
         for batch_index, batch_dict in enumerate(batch_generator):
             # 计算输出
             y_pred = self.model(batch_dict['image'])
@@ -268,8 +269,14 @@ class Trainer(object):
             acc_t = compute_accuracy(y_pred, batch_dict['packer'])
             running_acc += (acc_t - running_acc) / (batch_index + 1)
 
+            all_pred.extend(y_pred.max(dim=1)[1])
+            all_pack.extend(batch_dict['packer'])
+
         self.train_state['test_loss'] = running_loss
         self.train_state['test_acc'] = running_acc
+
+        print("---->>>   Confusion Matrix:")
+        Confusion_matrix(all_pred, all_pack)
 
         # 详细信息
         print("---->>>   Test performance:")
@@ -278,13 +285,20 @@ class Trainer(object):
 
 
 def train():
-    dataset = get_datasets()
+    # 加载数据集
+    dataset = get_image_datasets(
+        randam_seed=config["seed"],
+        state_size=config["state_size"],
+        vectorize=None)
+    # 保存向量器
     dataset.save_vectorizer(config["save_dir"] / config["vectorizer_file"])
     vectorizer = dataset.vectorizer
+    # 初始化神经网络
     model = my_ODEnet(
         input_dim=3, output_dim=len(vectorizer.packer_vocab), state_dim=64)
     print(model.named_modules)
 
+    # 初始化训练器
     trainer = Trainer(
         dataset=dataset,
         model=model,
@@ -297,15 +311,19 @@ def train():
         learning_rate=config["learning_rate"],
         early_stopping_criteria=config["early_stopping_criteria"])
 
+    # 训练
     trainer.run_train_loop()
 
+    # 训练状态图
     plot_performance(
         train_state=trainer.train_state,
         save_dir=config["save_dir"] / config["performance_img"],
         show_plot=True)
 
+    # 测试
     trainer.run_test_loop()
 
+    # 保存网络状态
     save_train_state(
         train_state=trainer.train_state,
         save_dir=config["save_dir"] / config["train_state_file"])

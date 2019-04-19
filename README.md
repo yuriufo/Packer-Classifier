@@ -1,18 +1,22 @@
 # Packer-Classifier
 Graduation Project
 
-## my_models
+## `./gadgets`
+
+一些小功能的实现。
+
+## `./my_models`
 
 收集的一些神经网络模型。
 
-## my_sandbox
+## `./my_sandbox`
 
 使用虚拟机做类沙箱操作，用于对PE文件预处理，也就是提取前32*32条指令信息。
 
-## old_temp
+## `./pre_data`
 
-可能不再被使用的旧脚本，先存着吧。
+对从沙箱中提取的信息进行再一步处理，转化成.csv。
 
-## pre_data
+## `./my_train.py'
 
-对从沙箱中提取的信息进行再一步处理，比如转化成图像等。
+训练。

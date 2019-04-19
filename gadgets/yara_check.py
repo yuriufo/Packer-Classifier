@@ -3,14 +3,13 @@
 
 from yara import compile
 from pathlib import Path
-import shutil
-import settings as sts
+import os
 
 
 class YaraCheck(object):
     def __init__(self, rules_path):
         super(YaraCheck, self).__init__()
-        self.Rules = self.setRules(str(Path(r"\pre_data\packer.yar")))
+        self.Rules = self.setRules(rules_path)
 
     def setRules(self, path):
         yaraRule = compile(path)
@@ -40,27 +39,18 @@ def clas_file(file_path, yc):
         return None
 
 
-def mycopyfile(srcfile, save_path):
-    try:
-        if not save_path.exists():
-            save_path.mkdir(parents=True)
-        shutil.copyfile(srcfile, save_path / (srcfile.name))
-    except Exception:
-        pass
-
-
 if __name__ == '__main__':
-    yc = YaraCheck()
-    for file_path in get_files_list(r"F:\spider"):
+    num = 0
+    yc = YaraCheck(r"./gadgets/packer.yar")
+    for file_path in get_files_list(r"F:\my_packer\packed\Molebox\Molebox_2.63"):
         ans = clas_file(file_path, yc)
         # print(ans)
         if len(ans) == 0:
+            os.remove(str(file_path))
+            num = num + 1
             continue
         ams_l = " ".join(ans).lower()
-        for packer in sts.PACKERS_LANDSPACE:
-            if packer.lower() in ams_l:
-                if packer == "ASProtect" and "yoda" in ams_l:
-                    continue
-                save_path = sts.CAL_MAL_PATH / packer
-                mycopyfile(file_path, save_path)
-                break
+        # if 'mole' not in ams_l:
+            # num = num + 1
+            # os.remove(str(file_path))
+    print(num)

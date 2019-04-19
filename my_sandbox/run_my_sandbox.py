@@ -4,6 +4,9 @@
 from pathlib import Path
 from pre_data import settings as sts
 import subprocess
+import time
+import os
+import gc
 
 # 参数
 config = {
@@ -34,6 +37,7 @@ def get_files_list(path):
             yield dir_, dir_.name
 
 
+# 恢复快照
 def revertToSnapshot():
     command = '{0} -T ws revertToSnapshot "{1}" {2}'.format(
         config["vmrun_path"], config["vmx_path"], config["vm_snapshot"])
@@ -41,6 +45,7 @@ def revertToSnapshot():
     p.wait()
 
 
+# 启动虚拟机
 def start():
     command = '{0} -T ws start "{1}" nogui'.format(config["vmrun_path"],
                                                    config["vmx_path"])
@@ -48,6 +53,7 @@ def start():
     p.wait()
 
 
+# 把文件从主机复制到虚拟机
 def copyFileFromHostToGuest(file_path, file_name):
     command = '{0} -gu {1} -gp {2} copyFileFromHostToGuest "{3}" "{4}" "{5}"'.format(
         config["vmrun_path"], config["vm_user"], config["vm_pass"],
@@ -56,6 +62,7 @@ def copyFileFromHostToGuest(file_path, file_name):
     p.wait()
 
 
+# 运行虚拟机中的脚本
 def runProgramInGuest(file_name):
     command = '{0} -T ws -gu {1} -gp {2} runProgramInGuest "{3}" "{4}" "{5}" -t {6} -f {7}'.format(
         config["vmrun_path"], config["vm_user"], config["vm_pass"],
@@ -65,6 +72,7 @@ def runProgramInGuest(file_name):
     p.wait()
 
 
+# 把预处理内容从虚拟机复制到主机
 def copyFileFromGuestToHost(save_path, file_name):
     command = '{0} -gu {1} -gp {2} copyFileFromGuestToHost "{3}" "{4}" "{5}"'.format(
         config["vmrun_path"], config["vm_user"], config["vm_pass"],
@@ -74,6 +82,7 @@ def copyFileFromGuestToHost(save_path, file_name):
     p.wait()
 
 
+# 关闭虚拟机
 def stop():
     command = '{0} -T ws stop "{1}"'.format(config["vmrun_path"],
                                             config["vmx_path"])
@@ -81,14 +90,26 @@ def stop():
     p.wait()
 
 
-def main():
+def get_yuri(packer_ex_path=""):
+    num = 0
+    
     for file_path, file_name in get_files_list(
-            sts.PACKER_RAW_PATH / r"PE32\FSG"):
+            sts.PACKER_RAW_PATH / packer_ex_path):
 
-        sub_path = file_path.parents.relative_to(sts.PACKER_RAW_PATH)
+        sub_path = file_path.parent.relative_to(sts.PACKER_RAW_PATH)
         save_path = sts.PACKER_SAVE_YURI_PATH / sub_path
         if not save_path.exists():
             save_path.mkdir(parents=True)
+
+        if os.path.isfile(str(save_path / file_name)):
+            # print("{} exists.".format(file_path))
+            continue
+
+        num = num + 1
+        if num % 100 == 0:
+            stop()
+            gc.collect()
+            time.sleep(60 * 15)
 
         try:
             revertToSnapshot()
@@ -99,6 +120,7 @@ def main():
             print("{} completed!".format(file_path))
         except Exception:
             print("{} get worry.".format(file_path))
+        time.sleep(5)
     else:
         try:
             stop()
@@ -109,4 +131,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    get_yuri()
