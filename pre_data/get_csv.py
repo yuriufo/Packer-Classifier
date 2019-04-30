@@ -46,12 +46,10 @@ def get_csv(file_path, data_dict):
 
         ins_ = []
         for disa in file_dict['disa']:
-            ins_.append(disa.split(" ")[0])
-        while len(ins_) < 1024:
-            ins_.append("0")
+            ins_.append(disa.split(" ")[0].strip())
 
         data_dict["image"].append(np.asarray(opc_, dtype="float32"))
-        data_dict["ins"].append(ins_)
+        data_dict["ins"].append(" ".join(ins_))
         data_dict["packer"].append(label)
 
 
@@ -62,7 +60,7 @@ def main():
     for sub_path in sub_path_list:
         get_csv(sub_path, data_dict)
     df = pd.DataFrame(data_dict)
-    pd.to_pickle(df, sts.SAVE_CSV_PATH / 'train_data.pkl')
+    pd.to_pickle(df, sts.SAVE_CSV_PATH / 'train_data_20190429.pkl')
 
 
 if __name__ == '__main__':

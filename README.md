@@ -17,6 +17,6 @@ Graduation Project
 
 对从沙箱中提取的信息进行再一步处理，转化成.csv。
 
-## `./my_train.py'
+## `./my_train.py`
 
 训练。

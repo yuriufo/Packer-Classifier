@@ -9,7 +9,7 @@
             "type": "python",
             "request": "launch",
             "program": "${file}",
-            "console": "none",
+            "console": "internalConsole",
             "env": {"PYTHONPATH":"${workspaceRoot}"}
         },
         {
@@ -30,14 +30,14 @@
             "type": "python",
             "request": "launch",
             "module": "enter-your-module-name-here",
-            "console": "none"
+            "console": "internalConsole"
         },
         {
             "name": "Python: Django",
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/manage.py",
-            "console": "none",
+            "console": "internalConsole",
             "args": [
                 "runserver",
                 "--noreload",
@@ -65,7 +65,7 @@
             "type": "python",
             "request": "launch",
             "program": "${file}",
-            "console": "none"
+            "console": "internalConsole"
         }
     ]
 }

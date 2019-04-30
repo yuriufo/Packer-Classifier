@@ -10,8 +10,9 @@ import json
 from torch.utils.data import Dataset, DataLoader
 import torch
 import pre_data.settings as sts
+from collections import Counter
 
-__all__ = ["get_image_datasets"]
+__all__ = ["InsVectorizer"]
 
 # Classes
 classes = sts.PACKERS_LANDSPACE
@@ -67,86 +68,122 @@ class Vocabulary(object):
         return len(self.token_to_idx)
 
 
-# 序列化词汇表：实际图像的词汇表，存储标准差与平均值
-class SequenceVocabulary():
-    def __init__(self, train_means, train_stds):
+# 序列化词汇表：反汇编指令的词汇表，存储反汇编指令
+class INS_SequenceVocabulary(Vocabulary):
+    def __init__(self,
+                 token_to_idx=None,
+                 unk_token="<UNK>",
+                 mask_token="<MASK>",
+                 begin_seq_token="<BEGIN>",
+                 end_seq_token="<END>"):
 
-        self.train_means = train_means
-        self.train_stds = train_stds
+        super(INS_SequenceVocabulary, self).__init__(token_to_idx)
+
+        self.mask_token = mask_token
+        self.unk_token = unk_token
+        self.begin_seq_token = begin_seq_token
+        self.end_seq_token = end_seq_token
+
+        self.mask_index = self.add_token(self.mask_token)
+        self.unk_index = self.add_token(self.unk_token)
+        self.begin_seq_index = self.add_token(self.begin_seq_token)
+        self.end_seq_index = self.add_token(self.end_seq_token)
+
+        # 索引到令牌
+        self.idx_to_token = {
+            idx: token
+            for token, idx in self.token_to_idx.items()
+        }
 
     def to_serializable(self):
-        contents = {
-            'train_means': self.train_means,
-            'train_stds': self.train_stds
-        }
+        contents = super(INS_SequenceVocabulary, self).to_serializable()
+        contents.update({
+            'unk_token': self.unk_token,
+            'mask_token': self.mask_token,
+            'begin_seq_token': self.begin_seq_token,
+            'end_seq_token': self.end_seq_token
+        })
         return contents
 
-    @classmethod
-    def from_dataframe(cls, df):
-        train_data = df[df.split == "train"]
-        means = {0: [], 1: [], 2: []}
-        stds = {0: [], 1: [], 2: []}
-        for image in train_data.image:
-            for dim in range(3):
-                means[dim].append(np.mean(image[:, :, dim]))
-                stds[dim].append(np.std(image[:, :, dim]))
-        train_means = np.array(
-            (np.mean(means[0]), np.mean(means[1]), np.mean(means[2])),
-            dtype="float64").tolist()
-        train_stds = np.array(
-            (np.mean(stds[0]), np.mean(stds[1]), np.mean(stds[2])),
-            dtype="float64").tolist()
+    def lookup_token(self, token):
+        return self.token_to_idx.get(token, self.unk_index)
 
-        return cls(train_means, train_stds)
+    def lookup_index(self, index):
+        if index not in self.idx_to_token:
+            raise KeyError(
+                "the index ({0}) is not in the INS_SequenceVocabulary".format(
+                    index))
+        return self.idx_to_token[index]
 
     def __str__(self):
-        return "<SequenceVocabulary(train_means: {0}, train_stds: {1}>".format(
-            self.train_means, self.train_stds)
+        return "<INS_SequenceVocabulary(size={0})>".format(
+            len(self.token_to_idx))
+
+    def __len__(self):
+        return len(self.token_to_idx)
 
 
 # 向量器：输入和输出的词汇表类实例，使用词汇表标准化图像
-class ImageVectorizer(object):
-    def __init__(self, image_vocab, packer_vocab):
-        self.image_vocab = image_vocab
+class InsVectorizer(object):
+    def __init__(self, ins_vocab, packer_vocab):
+        self.ins_vocab = ins_vocab
         self.packer_vocab = packer_vocab
 
-    def vectorize(self, image):
+    def vectorize(self, ins_s):
 
-        # 防止改变实际的df
-        image = np.copy(image)
+        # 向量化每一个文件的汇编指令集序列
+        indices = [
+            self.ins_vocab.lookup_token(token) for token in ins_s.split(" ")
+        ]
 
-        # 正则化
-        for dim in range(3):
-            mean = self.image_vocab.train_means[dim]
-            std = self.image_vocab.train_stds[dim]
-            image[:, :, dim] = ((image[:, :, dim] - mean) / std)
+        indices = [self.ins_vocab.begin_seq_index
+                   ] + indices + [self.ins_vocab.end_seq_index]
 
-        # 把输入shape (a, a, b) 变为 (b, a, a)
-        image = np.swapaxes(image, 0, 2)
-        image = np.swapaxes(image, 1, 2)
+        # 创建向量
+        ins_length = len(indices)
+        vector = np.zeros(ins_length, dtype=np.int64)
+        vector[:len(indices)] = indices
 
-        return image
+        return vector
+
+    # 反向量化
+    def unvectorize(self, vector):
+        tokens = [self.ins_vocab.lookup_index(index) for index in vector]
+        title = " ".join(token for token in tokens)
+        return title
 
     @classmethod
-    def from_dataframe(cls, df):
+    def from_dataframe(cls, df, cutoff):
+
         # 创建壳类别词汇表
         packer_vocab = Vocabulary()
         for packer in sorted(set(df.packer)):
             packer_vocab.add_token(packer)
-        # 创建图像词汇表
-        image_vocab = SequenceVocabulary.from_dataframe(df)
-        return cls(image_vocab, packer_vocab)
+
+        # 获取长度
+        word_counts = Counter()
+        for ins_ in df.ins:
+            for token in ins_.split(" "):
+                word_counts[token] += 1
+
+        # 创建反汇编指令的词汇表实例
+        ins_vocab = INS_SequenceVocabulary()
+        for word, word_count in word_counts.items():
+            if word_count >= cutoff:
+                ins_vocab.add_token(word)
+
+        return cls(ins_vocab, packer_vocab)
 
     @classmethod
     def from_serializable(cls, contents):
-        image_vocab = SequenceVocabulary.from_serializable(
-            contents['image_vocab'])
+        ins_vocab = INS_SequenceVocabulary.from_serializable(
+            contents['ins_vocab'])
         packer_vocab = Vocabulary.from_serializable(contents['packer_vocab'])
-        return cls(image_vocab=image_vocab, packer_vocab=packer_vocab)
+        return cls(ins_vocab=ins_vocab, packer_vocab=packer_vocab)
 
     def to_serializable(self):
         return {
-            'image_vocab': self.image_vocab.to_serializable(),
+            'ins_vocab': self.ins_vocab.to_serializable(),
             'packer_vocab': self.packer_vocab.to_serializable()
         }
 
@@ -156,6 +193,11 @@ class ImageDataset(Dataset):
     def __init__(self, df, vectorizer):
         self.df = df
         self.vectorizer = vectorizer
+
+        # 最大汇编指令集长度
+        self.max_seq_length = max(
+            map(lambda ins_s: len(ins_s.split(" ")),
+                df.ins)) + 2  # (<BEGIN> + <END>)
 
         # 数据分割
         self.train_df = self.df[self.df.split == 'train']
@@ -183,9 +225,9 @@ class ImageDataset(Dataset):
             frequencies, dtype=torch.float32)
 
     @classmethod
-    def load_dataset_and_make_vectorizer(cls, df):
+    def load_dataset_and_make_vectorizer(cls, df, cutoff):
         train_df = df[df.split == 'train']
-        return cls(df, ImageVectorizer.from_dataframe(train_df))
+        return cls(df, InsVectorizer.from_dataframe(train_df, cutoff))
 
     @classmethod
     def load_dataset_and_load_vectorizer(cls, df, vectorizer_filepath):
@@ -194,7 +236,7 @@ class ImageDataset(Dataset):
 
     def load_vectorizer_only(vectorizer_filepath):
         with vectorizer_filepath.open() as fp:
-            return ImageVectorizer.from_serializable(json.load(fp))
+            return InsVectorizer.from_serializable(json.load(fp))
 
     def save_vectorizer(self, vectorizer_filepath):
         with vectorizer_filepath.open("w") as fp:
@@ -213,21 +255,23 @@ class ImageDataset(Dataset):
 
     def __getitem__(self, index):
         row = self.target_df.iloc[index]
-        image_vector = self.vectorizer.vectorize(row.image)
+        ins_vector = self.vectorizer.vectorize(row.ins)
         packer_index = self.vectorizer.packer_vocab.lookup_token(row.packer)
-        return {'image': image_vector, 'packer': packer_index}
+        return {'ins': ins_vector, 'packer': packer_index}
 
     def get_num_batches(self, batch_size):
         return len(self) // batch_size
 
     def generate_batches(self,
                          batch_size,
+                         collate_fn,
                          shuffle=True,
                          drop_last=True,
                          device="cpu"):
         dataloader = DataLoader(
             dataset=self,
             batch_size=batch_size,
+            collate_fn=collate_fn,
             shuffle=shuffle,
             drop_last=drop_last)
         for data_dict in dataloader:
@@ -237,30 +281,30 @@ class ImageDataset(Dataset):
             yield out_data_dict
 
 
-def get_image_datasets(csv_path=sts.SAVE_CSV_PATH / "train_data.pkl",
-                       randam_seed=None,
-                       state_size=[0.7, 0.15, 0.15],
-                       vectorize=None):
+def get_ins_datasets(csv_path=sts.SAVE_CSV_PATH / "train_data_20190429.pkl",
+                     randam_seed=None,
+                     state_size=[0.7, 0.15, 0.15],
+                     vectorize=None):
 
     if np.sum(state_size) != 1.0 or any([i < 0 for i in state_size]):
         raise Exception("np.sum({0}) != 1 or not integer".format(state_size))
+    if randam_seed is not None:
+        np.random.seed(randam_seed)
 
     train_df = pd.read_pickle(csv_path)
-    df = train_df[['image', 'packer']]
+    df = train_df[['ins', 'packer']]
 
     by_packer = collections.defaultdict(list)
     for _, row in df.iterrows():
         by_packer[row.packer].append(row.to_dict())
 
-    # print("---->>>   packer:")
-    # for packer in by_packer:
-    #     print("{0}: {1}".format(packer, len(by_packer[packer])))
+    print("---->>>   packer:")
+    for packer in by_packer:
+        print("{0}: {1}".format(packer, len(by_packer[packer])))
 
     final_list = []
     for _, item_list in sorted(by_packer.items()):
-        if randam_seed is not None:
-            np.random.seed(randam_seed)
-            np.random.shuffle(item_list)
+        np.random.shuffle(item_list)
         n = len(item_list)
         n_train = int(state_size[0] * n)
         n_val = int(state_size[1] * n)
@@ -280,7 +324,7 @@ def get_image_datasets(csv_path=sts.SAVE_CSV_PATH / "train_data.pkl",
 
     # 数据库实例
     if vectorize is None:
-        dataset = ImageDataset.load_dataset_and_make_vectorizer(split_df)
+        dataset = ImageDataset.load_dataset_and_make_vectorizer(split_df, 5)
     else:
         dataset = ImageDataset.load_dataset_and_load_vectorizer(
             split_df, vectorize)
@@ -288,12 +332,16 @@ def get_image_datasets(csv_path=sts.SAVE_CSV_PATH / "train_data.pkl",
 
 
 if __name__ == '__main__':
-    datasets = get_image_datasets(randam_seed=22)
+    datasets = get_ins_datasets(randam_seed=22)
     vector = datasets.vectorizer
 
-    print(vector.image_vocab)
+    print(vector.ins_vocab)
     print(vector.packer_vocab)
+    vectorized_ins = vector.vectorize("mov add ret retn jmp call or")
+    print(np.shape(vectorized_ins))
+    print(vectorized_ins)
+    print(vector.unvectorize(vectorized_ins))
     print(datasets)
-    input_ = datasets[10]  # __getitem__
-    print(input_['image'].shape)
+    input_ = datasets[10]['ins']  # __getitem__
+    print(input_)
     print(datasets.class_weights)

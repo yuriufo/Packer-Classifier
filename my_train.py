@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-import adabound
+# import adabound
 
 import time
 import uuid
@@ -17,11 +17,11 @@ from my_models.ODEnet import ODEfunc, ODEBlock, Flatten, norm
 from my_models.my_transformer import ST
 from gadgets.ggs import compute_accuracy, update_train_state, save_train_state, plot_performance, Confusion_matrix
 
-from my_Datasets.image_datasets import get_image_datasets
+from Datasets.image_datasets import get_image_datasets
 
 # 参数
 config = {
-    "seed": 7777,
+    "seed": 7,
     "cuda": False,
     "shuffle": True,
     "train_state_file": "train_state.json",
@@ -29,11 +29,11 @@ config = {
     "model_state_file": "model.pth",
     "performance_img": "performance.png",
     "save_dir": Path.cwd() / "experiments",
-    "state_size": [0.6, 0.25, 0.15],
-    "batch_size": 36,
+    "state_size": [0.7, 0.15, 0.15],  # [训练, 验证, 测试]
+    "batch_size": 64,
     "num_epochs": 15,
     "early_stopping_criteria": 3,
-    "learning_rate": 1e-3
+    "learning_rate": 3e-4
 }
 
 
@@ -130,9 +130,9 @@ class Trainer(object):
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.loss_func = nn.CrossEntropyLoss(self.class_weights)
-        self.optimizer = adabound.AdaBound(
-            self.model.parameters(), lr=learning_rate)  # 新的优化方法
-        # self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
+        # self.optimizer = adabound.AdaBound(
+        #    self.model.parameters(), lr=learning_rate)  # 新的优化方法
+        self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer=self.optimizer, mode='min', factor=0.5, patience=1)
         self.train_state = {
@@ -204,6 +204,8 @@ class Trainer(object):
 
             self.train_state['train_loss'].append(running_loss)
             self.train_state['train_acc'].append(running_acc)
+            # self.train_state['train_loss'].append(loss_t)
+            # self.train_state['train_acc'].append(acc_t)
             self.train_state['f_nfe'].append(f_nfe)
             self.train_state['b_nfe'].append(b_nfe)
 
@@ -235,6 +237,8 @@ class Trainer(object):
 
             self.train_state['val_loss'].append(running_loss)
             self.train_state['val_acc'].append(running_acc)
+            # self.train_state['val_loss'].append(loss_t)
+            # self.train_state['val_acc'].append(acc_t)
 
             self.train_state = update_train_state(
                 model=self.model, train_state=self.train_state)
@@ -275,6 +279,7 @@ class Trainer(object):
         self.train_state['test_loss'] = running_loss
         self.train_state['test_acc'] = running_acc
 
+        # 混淆矩阵
         print("---->>>   Confusion Matrix:")
         Confusion_matrix(all_pred, all_pack)
 
@@ -287,15 +292,17 @@ class Trainer(object):
 def train():
     # 加载数据集
     dataset = get_image_datasets(
+        csv_path=r"F:\my_packer\csv\train_data.pkl",
         randam_seed=config["seed"],
         state_size=config["state_size"],
         vectorize=None)
     # 保存向量器
     dataset.save_vectorizer(config["save_dir"] / config["vectorizer_file"])
-    vectorizer = dataset.vectorizer
     # 初始化神经网络
     model = my_ODEnet(
-        input_dim=3, output_dim=len(vectorizer.packer_vocab), state_dim=64)
+        input_dim=3,
+        output_dim=len(dataset.vectorizer.packer_vocab),
+        state_dim=64)
     print(model.named_modules)
 
     # 初始化训练器
@@ -328,11 +335,13 @@ def train():
         train_state=trainer.train_state,
         save_dir=config["save_dir"] / config["train_state_file"])
 
+    # 清空缓存
+    torch.cuda.empty_cache()
+
 
 def main():
     init()
     train()
-    torch.cuda.empty_cache()
 
 
 if __name__ == '__main__':

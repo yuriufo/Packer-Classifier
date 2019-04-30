@@ -92,7 +92,7 @@ def stop():
 
 def get_yuri(packer_ex_path=""):
     num = 0
-    
+
     for file_path, file_name in get_files_list(
             sts.PACKER_RAW_PATH / packer_ex_path):
 
@@ -109,7 +109,7 @@ def get_yuri(packer_ex_path=""):
         if num % 100 == 0:
             stop()
             gc.collect()
-            time.sleep(60 * 15)
+            time.sleep(60 * 5)
 
         try:
             revertToSnapshot()
@@ -117,7 +117,7 @@ def get_yuri(packer_ex_path=""):
             copyFileFromHostToGuest(file_path, file_name)
             runProgramInGuest(file_name)
             copyFileFromGuestToHost(save_path, file_name)
-            print("{} completed!".format(file_path))
+            # print("{} completed!".format(file_path))
         except Exception:
             print("{} get worry.".format(file_path))
         time.sleep(5)
