@@ -12,7 +12,7 @@ import torch
 import pre_data.settings as sts
 from collections import Counter
 
-__all__ = ["InsVectorizer"]
+__all__ = ["InsVectorizer", "get_ins_datasets"]
 
 # Classes
 classes = sts.PACKERS_LANDSPACE
@@ -298,9 +298,9 @@ def get_ins_datasets(csv_path=sts.SAVE_CSV_PATH / "train_data_20190429.pkl",
     for _, row in df.iterrows():
         by_packer[row.packer].append(row.to_dict())
 
-    print("---->>>   packer:")
-    for packer in by_packer:
-        print("{0}: {1}".format(packer, len(by_packer[packer])))
+    # print("---->>>   packer:")
+    # for packer in by_packer:
+    #     print("{0}: {1}".format(packer, len(by_packer[packer])))
 
     final_list = []
     for _, item_list in sorted(by_packer.items()):
