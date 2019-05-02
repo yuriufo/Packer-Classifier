@@ -30,13 +30,15 @@ config = {
     "performance_img": "performance.png",
     "save_dir": Path.cwd() / "experiments",
     "cutoff": 25,
-    "num_filters": 100,
+    "num_layers": 1,
     "embedding_dim": 100,
+    "rnn_hidden_dim": 128,
     "hidden_dim": 100,
     "dropout_p": 0.3,
+    "bidirectional": False,
     "state_size": [0.7, 0.15, 0.15],  # [训练, 验证, 测试]
-    "batch_size": 64,
-    "num_epochs": 15,
+    "batch_size": 48,
+    "num_epochs": 30,
     "early_stopping_criteria": 3,
     "learning_rate": 3e-5
 }
@@ -62,6 +64,14 @@ def create_dirs(dirpath):
         dirpath.mkdir(parents=True)
 
 
+def gather_last_relevant_hidden(hiddens, x_lengths):
+    x_lengths = x_lengths.long().detach().cpu().numpy() - 1
+    out = []
+    for batch_index, column_index in enumerate(x_lengths):
+        out.append(hiddens[batch_index, column_index])
+    return torch.stack(out)
+
+
 # (W-F+2P)/S
 # (W-F)/S + 1
 # ODEnet模型
@@ -69,10 +79,11 @@ class InsModel(nn.Module):
     def __init__(self,
                  embedding_dim,
                  num_embeddings,
-                 num_input_channels,
-                 num_channels,
+                 rnn_hidden_dim,
                  hidden_dim,
-                 num_classes,
+                 output_dim,
+                 num_layers,
+                 bidirectional,
                  dropout_p,
                  pretrained_embeddings=None,
                  freeze_embeddings=False,
@@ -93,43 +104,37 @@ class InsModel(nn.Module):
                 padding_idx=padding_idx,
                 _weight=pretrained_embeddings)
 
-        # 卷积层权重
-        self.conv = nn.ModuleList([
-            nn.Conv1d(num_input_channels, num_channels, kernel_size=f)
-            for f in [2, 3, 4]
-        ])
+        # GRU
+        self.gru = nn.GRU(
+            input_size=embedding_dim,
+            hidden_size=rnn_hidden_dim,
+            num_layers=num_layers,
+            batch_first=True,
+            bidirectional=bidirectional)
 
         # 全连接层权重
         self.dropout = nn.Dropout(dropout_p)
-        self.fc1 = nn.Linear(num_channels * 3, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, num_classes)
+        self.fc1 = nn.Linear(rnn_hidden_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, output_dim)
 
         if freeze_embeddings:
             self.embeddings.weight.requires_grad = False
 
-    def forward(self, x_in, channel_first=False, apply_softmax=False):
+    def forward(self, x_in, x_lengths, apply_softmax=False):
 
         # 嵌入
         x_in = self.embeddings(x_in)
 
-        # 重置输入形状
-        if not channel_first:
-            x_in = x_in.transpose(1, 2)
+        # 传入RNN
+        out, h_n = self.gru(x_in)
 
-        # 卷积层输出
-        z1 = self.conv[0](x_in)
-        z1 = F.max_pool1d(z1, z1.size(2)).squeeze(2)
-        z2 = self.conv[1](x_in)
-        z2 = F.max_pool1d(z2, z2.size(2)).squeeze(2)
-        z3 = self.conv[2](x_in)
-        z3 = F.max_pool1d(z3, z3.size(2)).squeeze(2)
-
-        # 拼接卷积层输出
-        z = torch.cat([z1, z2, z3], 1)
+        # 获取上一个相关隐藏状态
+        out = gather_last_relevant_hidden(out, x_lengths)
 
         # 全连接层
-        z = self.dropout(z)
+        z = self.dropout(out)
         z = self.fc1(z)
+        z = self.dropout(z)
         y_pred = self.fc2(z)
 
         if apply_softmax:
@@ -204,21 +209,21 @@ class Trainer(object):
 
         # 深度拷贝
         batch_copy = copy.deepcopy(batch)
-        processed_batch = {"ins": [], "packer": []}
+        processed_batch = {"ins": [], "ins_length": [], "packer": []}
 
         # 得到最长序列长度
         max_seq_len = max([len(sample["ins"]) for sample in batch_copy])
 
         # 填充
         for i, sample in enumerate(batch_copy):
-            seq = sample["ins"]
-            packer = sample["packer"]
-            padded_seq = self.pad_seq(seq, max_seq_len)
+            padded_seq = self.pad_seq(sample["ins"], max_seq_len)
             processed_batch["ins"].append(padded_seq)
-            processed_batch["packer"].append(packer)
+            processed_batch["ins_length"].append(sample["ins_length"])
+            processed_batch["packer"].append(sample["packer"])
 
         # 转换为合适的tensor
         processed_batch["ins"] = torch.LongTensor(processed_batch["ins"])
+        processed_batch["ins_length"] = torch.LongTensor(processed_batch["ins_length"])
         processed_batch["packer"] = torch.LongTensor(processed_batch["packer"])
 
         return processed_batch
@@ -246,7 +251,8 @@ class Trainer(object):
                 self.optimizer.zero_grad()
 
                 # 计算输出
-                y_pred = self.model(batch_dict['ins'])
+                y_pred = self.model(batch_dict['ins'],
+                                    batch_dict['ins_length'])
 
                 # 计算损失
                 loss = self.loss_func(y_pred, batch_dict['packer'])
@@ -286,7 +292,8 @@ class Trainer(object):
             for batch_index, batch_dict in enumerate(batch_generator):
 
                 # 计算输出
-                y_pred = self.model(batch_dict['ins'])
+                y_pred = self.model(batch_dict['ins'],
+                                    batch_dict['ins_length'])
 
                 # 计算损失
                 loss = self.loss_func(y_pred, batch_dict['packer'])
@@ -325,7 +332,7 @@ class Trainer(object):
 
         for batch_index, batch_dict in enumerate(batch_generator):
             # 计算输出
-            y_pred = self.model(batch_dict['ins'])
+            y_pred = self.model(batch_dict['ins'], batch_dict['ins_length'])
 
             # 计算损失
             loss = self.loss_func(y_pred, batch_dict['packer'])
@@ -366,10 +373,11 @@ def train():
     model = InsModel(
         embedding_dim=config["embedding_dim"],
         num_embeddings=len(vectorizer.ins_vocab),
-        num_input_channels=config["embedding_dim"],
-        num_channels=config["num_filters"],
+        rnn_hidden_dim=config["rnn_hidden_dim"],
         hidden_dim=config["hidden_dim"],
-        num_classes=len(vectorizer.packer_vocab),
+        output_dim=len(vectorizer.packer_vocab),
+        num_layers=config["num_layers"],
+        bidirectional=config["bidirectional"],
         dropout_p=config["dropout_p"],
         pretrained_embeddings=None,
         padding_idx=vectorizer.ins_vocab.mask_index)

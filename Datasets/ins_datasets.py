@@ -11,6 +11,7 @@ from torch.utils.data import Dataset, DataLoader
 import torch
 import pre_data.settings as sts
 from collections import Counter
+from tqdm import tqdm
 
 __all__ = ["InsVectorizer", "get_ins_datasets"]
 
@@ -144,13 +145,13 @@ class InsVectorizer(object):
         vector = np.zeros(ins_length, dtype=np.int64)
         vector[:len(indices)] = indices
 
-        return vector
+        return vector, ins_length
 
     # 反向量化
     def unvectorize(self, vector):
         tokens = [self.ins_vocab.lookup_index(index) for index in vector]
-        title = " ".join(token for token in tokens)
-        return title
+        ins_ = " ".join(token for token in tokens)
+        return ins_
 
     @classmethod
     def from_dataframe(cls, df, cutoff):
@@ -247,17 +248,21 @@ class ImageDataset(Dataset):
         self.target_df, self.target_size = self.lookup_dict[split]
 
     def __str__(self):
-        return "<Dataset(split={0}, size={1})".format(self.target_split,
-                                                      self.target_size)
+        return "<Dataset(split={0}, size={1})>".format(self.target_split,
+                                                       self.target_size)
 
     def __len__(self):
         return self.target_size
 
     def __getitem__(self, index):
         row = self.target_df.iloc[index]
-        ins_vector = self.vectorizer.vectorize(row.ins)
+        ins_vector, ins_length = self.vectorizer.vectorize(row.ins)
         packer_index = self.vectorizer.packer_vocab.lookup_token(row.packer)
-        return {'ins': ins_vector, 'packer': packer_index}
+        return {
+            'ins': ins_vector,
+            'ins_length': ins_length,
+            'packer': packer_index
+        }
 
     def get_num_batches(self, batch_size):
         return len(self) // batch_size
@@ -274,7 +279,7 @@ class ImageDataset(Dataset):
             collate_fn=collate_fn,
             shuffle=shuffle,
             drop_last=drop_last)
-        for data_dict in dataloader:
+        for data_dict in tqdm(dataloader, desc=str(self)):
             out_data_dict = {}
             for name, tensor in data_dict.items():
                 out_data_dict[name] = data_dict[name].to(device)
@@ -337,9 +342,11 @@ if __name__ == '__main__':
 
     print(vector.ins_vocab)
     print(vector.packer_vocab)
-    vectorized_ins = vector.vectorize("mov add ret retn jmp call or")
+    vectorized_ins, ins_length = vector.vectorize(
+        "mov add ret retn jmp call or")
     print(np.shape(vectorized_ins))
     print(vectorized_ins)
+    print(ins_length)
     print(vector.unvectorize(vectorized_ins))
     print(datasets)
     input_ = datasets[10]['ins']  # __getitem__
