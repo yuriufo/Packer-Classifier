@@ -31,16 +31,18 @@ config = {
     "save_dir": Path.cwd() / "experiments",
     "cutoff": 25,
     "num_layers": 1,
-    "embedding_dim": 100,
-    "rnn_hidden_dim": 128,
-    "hidden_dim": 100,
-    "dropout_p": 0.3,
+    "embedding_dim": 50,
+    "kernels": [3, 5],
+    "num_filters": 50,
+    "rnn_hidden_dim": 64,
+    "hidden_dim": 36,
+    "dropout_p": 0.25,
     "bidirectional": False,
     "state_size": [0.7, 0.15, 0.15],  # [训练, 验证, 测试]
-    "batch_size": 48,
-    "num_epochs": 30,
-    "early_stopping_criteria": 3,
-    "learning_rate": 3e-5
+    "batch_size": 28,
+    "num_epochs": 60,
+    "early_stopping_criteria": 5,
+    "learning_rate": 2e-5
 }
 
 
@@ -72,73 +74,160 @@ def gather_last_relevant_hidden(hiddens, x_lengths):
     return torch.stack(out)
 
 
-# (W-F+2P)/S
-# (W-F)/S + 1
-# ODEnet模型
-class InsModel(nn.Module):
+# 编码器
+class InsEncoder(nn.Module):
     def __init__(self,
                  embedding_dim,
-                 num_embeddings,
+                 num_word_embeddings,
+                 num_char_embeddings,
+                 kernels,
+                 num_input_channels,
+                 num_output_channels,
                  rnn_hidden_dim,
-                 hidden_dim,
-                 output_dim,
                  num_layers,
                  bidirectional,
-                 dropout_p,
-                 pretrained_embeddings=None,
-                 freeze_embeddings=False,
-                 padding_idx=0):
-        super(InsModel, self).__init__()
+                 word_padding_idx=0,
+                 char_padding_idx=0):
+        super(InsEncoder, self).__init__()
 
-        if pretrained_embeddings is None:
-            self.embeddings = nn.Embedding(
-                embedding_dim=embedding_dim,
-                num_embeddings=num_embeddings,
-                padding_idx=padding_idx)
-        else:
-            pretrained_embeddings = torch.from_numpy(
-                pretrained_embeddings).float()
-            self.embeddings = nn.Embedding(
-                embedding_dim=embedding_dim,
-                num_embeddings=num_embeddings,
-                padding_idx=padding_idx,
-                _weight=pretrained_embeddings)
+        self.num_layers = num_layers
+        self.bidirectional = bidirectional
 
-        # GRU
+        # 嵌入层
+        self.word_embeddings = nn.Embedding(
+            num_embeddings=num_word_embeddings,
+            embedding_dim=embedding_dim,
+            padding_idx=word_padding_idx)
+        self.char_embeddings = nn.Embedding(
+            num_embeddings=num_char_embeddings,
+            embedding_dim=embedding_dim,
+            padding_idx=char_padding_idx)
+
+        # 卷积层权重
+        self.conv = nn.ModuleList([
+            nn.Conv1d(
+                in_channels=num_input_channels,
+                out_channels=num_output_channels,
+                kernel_size=kernel) for kernel in kernels
+        ])
+
+        # GRU层权重
         self.gru = nn.GRU(
-            input_size=embedding_dim,
+            input_size=embedding_dim * (len(kernels) + 1),
             hidden_size=rnn_hidden_dim,
             num_layers=num_layers,
             batch_first=True,
             bidirectional=bidirectional)
 
-        # 全连接层权重
+    def initialize_hidden_state(self, batch_size, rnn_hidden_dim, device):
+        num_directions = 2 if self.bidirectional else 1
+        hidden_t = torch.zeros(self.num_layers * num_directions, batch_size,
+                               rnn_hidden_dim).to(device)
+        return hidden_t
+
+    def get_char_level_embeddings(self, x):
+        # x: (N, seq_len, word_len)
+        batch_size, seq_len, word_len = x.size()
+        x = x.view(-1, word_len)  # (N * seq_len, word_len)
+
+        # 嵌入层
+        x = self.char_embeddings(x)  # (N * seq_len, word_len, embedding_dim)
+
+        # 重排使得num_input_channels在第一维 (N, embedding_dim, word_len)
+        x = x.transpose(1, 2)
+
+        # 卷积层
+        z = [F.relu(conv(x)) for conv in self.conv]
+
+        # 池化
+        z = [F.max_pool1d(zz, zz.size(2)).squeeze(2) for zz in z]
+        z = [zz.view(batch_size, seq_len, -1)
+             for zz in z]  # (N, seq_len, embedding_dim)
+
+        # 连接卷积输出得到字符级嵌入
+        z = torch.cat(z, 2)
+
+        return z
+
+    def forward(self, x_word, x_char, x_lengths, device):
+        # x_word: (N, seq_size)
+        # x_char: (N, seq_size, word_len)
+
+        # 词级嵌入层
+        z_word = self.word_embeddings(x_word)
+
+        # 字符级嵌入层
+        z_char = self.get_char_level_embeddings(x=x_char)
+
+        # 连接结果
+        z = torch.cat([z_word, z_char], 2)
+
+        # 向RNN输入
+        initial_h = self.initialize_hidden_state(
+            batch_size=z.size(0),
+            rnn_hidden_dim=self.gru.hidden_size,
+            device=device)
+        out, h_n = self.gru(z, initial_h)
+
+        return out
+
+
+# 解码器
+class InsDecoder(nn.Module):
+    def __init__(self, rnn_hidden_dim, hidden_dim, output_dim, dropout_p):
+        super(InsDecoder, self).__init__()
+
+        # 注意力机制的全连接模型
+        self.fc_attn = nn.Linear(rnn_hidden_dim, rnn_hidden_dim)
+        self.v = nn.Parameter(torch.rand(rnn_hidden_dim))
+
+        # 全连接参数
         self.dropout = nn.Dropout(dropout_p)
         self.fc1 = nn.Linear(rnn_hidden_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, output_dim)
 
-        if freeze_embeddings:
-            self.embeddings.weight.requires_grad = False
+    def forward(self, encoder_outputs, apply_softmax=False):
 
-    def forward(self, x_in, x_lengths, apply_softmax=False):
-
-        # 嵌入
-        x_in = self.embeddings(x_in)
-
-        # 传入RNN
-        out, h_n = self.gru(x_in)
-
-        # 获取上一个相关隐藏状态
-        out = gather_last_relevant_hidden(out, x_lengths)
+        # 注意力机制
+        z = torch.tanh(self.fc_attn(encoder_outputs))
+        z = z.transpose(2, 1)  # [B*H*T]
+        v = self.v.repeat(encoder_outputs.size(0), 1).unsqueeze(1)  # [B*1*H]
+        z = torch.bmm(v, z).squeeze(1)  # [B*T]
+        attn_scores = F.softmax(z, dim=1)
+        context = torch.matmul(
+            encoder_outputs.transpose(-2, -1),
+            attn_scores.unsqueeze(dim=2)).squeeze()
+        if len(context.size()) == 1:
+            context = context.unsqueeze(0)
 
         # 全连接层
-        z = self.dropout(out)
+        z = self.dropout(context)
         z = self.fc1(z)
         z = self.dropout(z)
         y_pred = self.fc2(z)
 
         if apply_softmax:
             y_pred = F.softmax(y_pred, dim=1)
+        return attn_scores, y_pred
+
+
+class InsModel(nn.Module):
+    def __init__(self, embedding_dim, num_word_embeddings, num_char_embeddings,
+                 kernels, num_input_channels, num_output_channels,
+                 rnn_hidden_dim, hidden_dim, output_dim, num_layers,
+                 bidirectional, dropout_p, word_padding_idx, char_padding_idx):
+        super(InsModel, self).__init__()
+
+        self.encoder = InsEncoder(
+            embedding_dim, num_word_embeddings, num_char_embeddings, kernels,
+            num_input_channels, num_output_channels, rnn_hidden_dim,
+            num_layers, bidirectional, word_padding_idx, char_padding_idx)
+        self.decoder = InsDecoder(rnn_hidden_dim, hidden_dim, output_dim,
+                                  dropout_p)
+
+    def forward(self, x_word, x_char, x_lengths, device, apply_softmax=False):
+        encoder_outputs = self.encoder(x_word, x_char, x_lengths, device)
+        y_pred = self.decoder(encoder_outputs, apply_softmax)
         return y_pred
 
 
@@ -199,31 +288,55 @@ class Trainer(object):
             "b_nfe": []
         }
 
-    def pad_seq(self, seq, length):
+    def pad_word_seq(self, seq, length):
         vector = np.zeros(length, dtype=np.int64)
         vector[:len(seq)] = seq
-        vector[len(seq):] = self.dataset.vectorizer.ins_vocab.mask_index
+        vector[len(seq):] = self.dataset.vectorizer.ins_word_vocab.mask_index
+        return vector
+
+    def pad_char_seq(self, seq, seq_length, word_length):
+        vector = np.zeros((seq_length, word_length), dtype=np.int64)
+        vector.fill(self.dataset.vectorizer.ins_char_vocab.mask_index)
+        for i in range(len(seq)):
+            char_padding = np.zeros(word_length - len(seq[i]), dtype=np.int64)
+            vector[i] = np.concatenate((seq[i], char_padding), axis=None)
         return vector
 
     def collate_fn(self, batch):
 
         # 深度拷贝
         batch_copy = copy.deepcopy(batch)
-        processed_batch = {"ins": [], "ins_length": [], "packer": []}
+        processed_batch = {
+            'ins_word_vector': [],
+            'ins_char_vector': [],
+            'ins_length': [],
+            'packer': []
+        }
 
         # 得到最长序列长度
-        max_seq_len = max([len(sample["ins"]) for sample in batch_copy])
+        max_seq_length = max(
+            [len(sample["ins_word_vector"]) for sample in batch_copy])
+        max_word_length = max(
+            [len(sample["ins_char_vector"][0]) for sample in batch_copy])
 
         # 填充
         for i, sample in enumerate(batch_copy):
-            padded_seq = self.pad_seq(sample["ins"], max_seq_len)
-            processed_batch["ins"].append(padded_seq)
+            padded_word_seq = self.pad_word_seq(sample["ins_word_vector"],
+                                                max_seq_length)
+            padded_cahr_seq = self.pad_char_seq(
+                sample["ins_char_vector"], max_seq_length, max_word_length)
+            processed_batch["ins_word_vector"].append(padded_word_seq)
+            processed_batch["ins_char_vector"].append(padded_cahr_seq)
             processed_batch["ins_length"].append(sample["ins_length"])
             processed_batch["packer"].append(sample["packer"])
 
         # 转换为合适的tensor
-        processed_batch["ins"] = torch.LongTensor(processed_batch["ins"])
-        processed_batch["ins_length"] = torch.LongTensor(processed_batch["ins_length"])
+        processed_batch["ins_word_vector"] = torch.LongTensor(
+            processed_batch["ins_word_vector"])
+        processed_batch["ins_char_vector"] = torch.LongTensor(
+            processed_batch["ins_char_vector"])
+        processed_batch["ins_length"] = torch.LongTensor(
+            processed_batch["ins_length"])
         processed_batch["packer"] = torch.LongTensor(processed_batch["packer"])
 
         return processed_batch
@@ -234,6 +347,8 @@ class Trainer(object):
             self.train_state['epoch_index'] = epoch_index
 
             # 遍历训练集
+
+            torch.cuda.empty_cache()
 
             # 初始化批生成器, 设置为训练模式，损失和准确率归零
             self.dataset.set_split('train')
@@ -251,8 +366,11 @@ class Trainer(object):
                 self.optimizer.zero_grad()
 
                 # 计算输出
-                y_pred = self.model(batch_dict['ins'],
-                                    batch_dict['ins_length'])
+                _, y_pred = self.model(
+                    x_word=batch_dict['ins_word_vector'],
+                    x_char=batch_dict['ins_char_vector'],
+                    x_lengths=batch_dict['ins_length'],
+                    device=self.device)
 
                 # 计算损失
                 loss = self.loss_func(y_pred, batch_dict['packer'])
@@ -278,6 +396,8 @@ class Trainer(object):
 
             # 遍历验证集
 
+            torch.cuda.empty_cache()
+
             # 初始化批生成器, 设置为验证模式，损失和准确率归零
             self.dataset.set_split('val')
             batch_generator = self.dataset.generate_batches(
@@ -292,8 +412,11 @@ class Trainer(object):
             for batch_index, batch_dict in enumerate(batch_generator):
 
                 # 计算输出
-                y_pred = self.model(batch_dict['ins'],
-                                    batch_dict['ins_length'])
+                _, y_pred = self.model(
+                    x_word=batch_dict['ins_word_vector'],
+                    x_char=batch_dict['ins_char_vector'],
+                    x_lengths=batch_dict['ins_length'],
+                    device=self.device)
 
                 # 计算损失
                 loss = self.loss_func(y_pred, batch_dict['packer'])
@@ -316,6 +439,8 @@ class Trainer(object):
                 break
 
     def run_test_loop(self):
+        torch.cuda.empty_cache()
+
         # 初始化批生成器, 设置为测试模式，损失和准确率归零
         self.dataset.set_split('test')
         batch_generator = self.dataset.generate_batches(
@@ -332,7 +457,11 @@ class Trainer(object):
 
         for batch_index, batch_dict in enumerate(batch_generator):
             # 计算输出
-            y_pred = self.model(batch_dict['ins'], batch_dict['ins_length'])
+            _, y_pred = self.model(
+                x_word=batch_dict['ins_word_vector'],
+                x_char=batch_dict['ins_char_vector'],
+                x_lengths=batch_dict['ins_length'],
+                device=self.device)
 
             # 计算损失
             loss = self.loss_func(y_pred, batch_dict['packer'])
@@ -372,15 +501,19 @@ def train():
     vectorizer = dataset.vectorizer
     model = InsModel(
         embedding_dim=config["embedding_dim"],
-        num_embeddings=len(vectorizer.ins_vocab),
+        num_word_embeddings=len(vectorizer.ins_word_vocab),
+        num_char_embeddings=len(vectorizer.ins_char_vocab),
+        kernels=config["kernels"],
+        num_input_channels=config["embedding_dim"],
+        num_output_channels=config["num_filters"],
         rnn_hidden_dim=config["rnn_hidden_dim"],
         hidden_dim=config["hidden_dim"],
         output_dim=len(vectorizer.packer_vocab),
         num_layers=config["num_layers"],
         bidirectional=config["bidirectional"],
         dropout_p=config["dropout_p"],
-        pretrained_embeddings=None,
-        padding_idx=vectorizer.ins_vocab.mask_index)
+        word_padding_idx=vectorizer.ins_word_vocab.mask_index,
+        char_padding_idx=vectorizer.ins_char_vocab.mask_index)
     print(model.named_modules)
 
     # 初始化训练器

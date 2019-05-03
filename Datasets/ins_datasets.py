@@ -69,7 +69,7 @@ class Vocabulary(object):
         return len(self.token_to_idx)
 
 
-# 序列化词汇表：反汇编指令的词汇表，存储反汇编指令
+# 序列化词汇表：反汇编指令的词汇表，存储反汇编指令集
 class INS_SequenceVocabulary(Vocabulary):
     def __init__(self,
                  token_to_idx=None,
@@ -85,16 +85,10 @@ class INS_SequenceVocabulary(Vocabulary):
         self.begin_seq_token = begin_seq_token
         self.end_seq_token = end_seq_token
 
-        self.mask_index = self.add_token(self.mask_token)
+        self.mask_index = self.add_token(self.mask_token)  # 0
         self.unk_index = self.add_token(self.unk_token)
         self.begin_seq_index = self.add_token(self.begin_seq_token)
         self.end_seq_index = self.add_token(self.end_seq_token)
-
-        # 索引到令牌
-        self.idx_to_token = {
-            idx: token
-            for token, idx in self.token_to_idx.items()
-        }
 
     def to_serializable(self):
         contents = super(INS_SequenceVocabulary, self).to_serializable()
@@ -105,6 +99,12 @@ class INS_SequenceVocabulary(Vocabulary):
             'end_seq_token': self.end_seq_token
         })
         return contents
+
+    @classmethod
+    def from_serializable(cls, contents):
+        return cls(contents['token_to_idx'], contents['unk_token'],
+                   contents['mask_token'], contents['begin_seq_token'],
+                   contents['end_seq_token'])
 
     def lookup_token(self, token):
         return self.token_to_idx.get(token, self.unk_index)
@@ -124,33 +124,58 @@ class INS_SequenceVocabulary(Vocabulary):
         return len(self.token_to_idx)
 
 
-# 向量器：输入和输出的词汇表类实例，使用词汇表标准化图像
+# 向量器：输入和输出的词汇表类实例
 class InsVectorizer(object):
-    def __init__(self, ins_vocab, packer_vocab):
-        self.ins_vocab = ins_vocab
+    def __init__(self, ins_word_vocab, ins_char_vocab, packer_vocab):
+        self.ins_word_vocab = ins_word_vocab
+        self.ins_char_vocab = ins_char_vocab
         self.packer_vocab = packer_vocab
 
+    # 向量化
     def vectorize(self, ins_s):
-
         # 向量化每一个文件的汇编指令集序列
         indices = [
-            self.ins_vocab.lookup_token(token) for token in ins_s.split(" ")
+            self.ins_word_vocab.lookup_token(token)
+            for token in ins_s.split(" ")
         ]
 
-        indices = [self.ins_vocab.begin_seq_index
-                   ] + indices + [self.ins_vocab.end_seq_index]
+        indices = [self.ins_word_vocab.begin_seq_index
+                   ] + indices + [self.ins_word_vocab.end_seq_index]
 
-        # 创建向量
+        # 词级向量
         ins_length = len(indices)
-        vector = np.zeros(ins_length, dtype=np.int64)
-        vector[:len(indices)] = indices
+        word_vector = np.zeros(ins_length, dtype=np.int64)
+        word_vector[:ins_length] = indices
 
-        return vector, ins_length
+        # 字符级向量
+        word_length = max([len(word) for word in ins_s.split(" ")])
+        char_vector = np.zeros((len(word_vector), word_length), dtype=np.int64)
+        char_vector[0, :] = self.ins_word_vocab.mask_index  # <BEGIN>
+        char_vector[-1, :] = self.ins_word_vocab.mask_index  # <END>
+        for i, word in enumerate(ins_s.split(" ")):
+            char_vector[i + 1, :len(word)] = [
+                self.ins_char_vocab.lookup_token(char) for char in word
+            ]
 
-    # 反向量化
-    def unvectorize(self, vector):
-        tokens = [self.ins_vocab.lookup_index(index) for index in vector]
+        return word_vector, char_vector, ins_length
+
+    # 词级反向量化
+    def unvectorize_word_vector(self, word_vector):
+        tokens = [
+            self.ins_word_vocab.lookup_index(index) for index in word_vector
+        ]
         ins_ = " ".join(token for token in tokens)
+        return ins_
+
+    # 字符级反向量化
+    def unvectorize_char_vector(self, char_vector):
+        ins_ = ""
+        for word_vector in char_vector:
+            for index in word_vector:
+                if index == self.ins_char_vocab.mask_index:
+                    break
+                ins_ += self.ins_char_vocab.lookup_index(index)
+            ins_ += " "
         return ins_
 
     @classmethod
@@ -161,44 +186,48 @@ class InsVectorizer(object):
         for packer in sorted(set(df.packer)):
             packer_vocab.add_token(packer)
 
-        # 获取长度
+        # 获取指令数目
         word_counts = Counter()
         for ins_ in df.ins:
             for token in ins_.split(" "):
                 word_counts[token] += 1
 
-        # 创建反汇编指令的词汇表实例
-        ins_vocab = INS_SequenceVocabulary()
+        # 创建反汇编指令的词汇表实例(word)
+        ins_word_vocab = INS_SequenceVocabulary()
         for word, word_count in word_counts.items():
             if word_count >= cutoff:
-                ins_vocab.add_token(word)
+                ins_word_vocab.add_token(word)
 
-        return cls(ins_vocab, packer_vocab)
+        # 创建反汇编指令的词汇表实例(char)
+        ins_char_vocab = INS_SequenceVocabulary()
+        for ins_ in df.ins:
+            for token in ins_:
+                ins_char_vocab.add_token(token)
+
+        return cls(ins_word_vocab, ins_char_vocab, packer_vocab)
 
     @classmethod
     def from_serializable(cls, contents):
-        ins_vocab = INS_SequenceVocabulary.from_serializable(
-            contents['ins_vocab'])
+        ins_word_vocab = INS_SequenceVocabulary.from_serializable(
+            contents['ins_word_vocab'])
+        ins_char_vocab = INS_SequenceVocabulary.from_serializable(
+            contents['ins_char_vocab'])
         packer_vocab = Vocabulary.from_serializable(contents['packer_vocab'])
-        return cls(ins_vocab=ins_vocab, packer_vocab=packer_vocab)
+        return cls(ins_word_vocab, ins_char_vocab, packer_vocab)
 
     def to_serializable(self):
         return {
-            'ins_vocab': self.ins_vocab.to_serializable(),
+            'ins_word_vocab': self.ins_word_vocab.to_serializable(),
+            'ins_char_vocab': self.ins_char_vocab.to_serializable(),
             'packer_vocab': self.packer_vocab.to_serializable()
         }
 
 
 # 数据集：提供向量化数据
-class ImageDataset(Dataset):
+class InsDataset(Dataset):
     def __init__(self, df, vectorizer):
         self.df = df
         self.vectorizer = vectorizer
-
-        # 最大汇编指令集长度
-        self.max_seq_length = max(
-            map(lambda ins_s: len(ins_s.split(" ")),
-                df.ins)) + 2  # (<BEGIN> + <END>)
 
         # 数据分割
         self.train_df = self.df[self.df.split == 'train']
@@ -256,10 +285,12 @@ class ImageDataset(Dataset):
 
     def __getitem__(self, index):
         row = self.target_df.iloc[index]
-        ins_vector, ins_length = self.vectorizer.vectorize(row.ins)
+        ins_word_vector, ins_char_vector, ins_length = self.vectorizer.vectorize(
+            row.ins)
         packer_index = self.vectorizer.packer_vocab.lookup_token(row.packer)
         return {
-            'ins': ins_vector,
+            'ins_word_vector': ins_word_vector,
+            'ins_char_vector': ins_char_vector,
             'ins_length': ins_length,
             'packer': packer_index
         }
@@ -271,7 +302,7 @@ class ImageDataset(Dataset):
                          batch_size,
                          collate_fn,
                          shuffle=True,
-                         drop_last=True,
+                         drop_last=False,
                          device="cpu"):
         dataloader = DataLoader(
             dataset=self,
@@ -329,9 +360,9 @@ def get_ins_datasets(csv_path=sts.SAVE_CSV_PATH / "train_data_20190429.pkl",
 
     # 数据库实例
     if vectorize is None:
-        dataset = ImageDataset.load_dataset_and_make_vectorizer(split_df, 5)
+        dataset = InsDataset.load_dataset_and_make_vectorizer(split_df, 5)
     else:
-        dataset = ImageDataset.load_dataset_and_load_vectorizer(
+        dataset = InsDataset.load_dataset_and_load_vectorizer(
             split_df, vectorize)
     return dataset
 
@@ -340,15 +371,25 @@ if __name__ == '__main__':
     datasets = get_ins_datasets(randam_seed=22)
     vector = datasets.vectorizer
 
-    print(vector.ins_vocab)
+    print(vector.ins_word_vocab)
+    print(vector.ins_char_vocab)
     print(vector.packer_vocab)
-    vectorized_ins, ins_length = vector.vectorize(
+    word_vector, char_vector, ins_length = vector.vectorize(
         "mov add ret retn jmp call or")
-    print(np.shape(vectorized_ins))
-    print(vectorized_ins)
-    print(ins_length)
-    print(vector.unvectorize(vectorized_ins))
+
+    print()
+
+    print("word_vector:", np.shape(word_vector))
+    print("char_vector:", np.shape(char_vector))
+    print("title_length:", ins_length)
+    print(word_vector)
+    print(char_vector)
+    print(vector.unvectorize_word_vector(word_vector))
+    print(vector.unvectorize_char_vector(char_vector))
+
+    print()
+
     print(datasets)
-    input_ = datasets[10]['ins']  # __getitem__
+    input_ = datasets[10]['ins_word_vector']  # __getitem__
     print(input_)
     print(datasets.class_weights)
