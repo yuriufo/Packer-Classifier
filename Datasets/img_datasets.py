@@ -11,7 +11,7 @@ from torch.utils.data import Dataset, DataLoader
 import torch
 import pre_data.settings as sts
 
-__all__ = ["ImageVectorizer", "get_image_datasets"]
+__all__ = ["Vocabulary", "IMG_SequenceVocabulary", "get_image_datasets"]
 
 # Classes
 classes = sts.PACKERS_LANDSPACE

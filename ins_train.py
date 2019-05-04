@@ -5,7 +5,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+# import torch.nn.functional as F
 import torch.optim as optim
 
 # import adabound
@@ -18,10 +18,11 @@ import numpy as np
 from gadgets.ggs import compute_accuracy, update_train_state, save_train_state, plot_performance, Confusion_matrix
 
 from Datasets.ins_datasets import get_ins_datasets
+from my_models.En_De import InsEncoder, InsDecoder
 
 # 参数
 config = {
-    "seed": 7,
+    "seed": 22,
     "cuda": False,
     "shuffle": True,
     "train_state_file": "train_state.json",
@@ -31,17 +32,17 @@ config = {
     "save_dir": Path.cwd() / "experiments",
     "cutoff": 25,
     "num_layers": 1,
-    "embedding_dim": 50,
+    "embedding_dim": 100,
     "kernels": [3, 5],
-    "num_filters": 50,
+    "num_filters": 100,
     "rnn_hidden_dim": 64,
     "hidden_dim": 36,
-    "dropout_p": 0.25,
+    "dropout_p": 0.3,
     "bidirectional": False,
     "state_size": [0.7, 0.15, 0.15],  # [训练, 验证, 测试]
-    "batch_size": 28,
-    "num_epochs": 60,
-    "early_stopping_criteria": 5,
+    "batch_size": 20,
+    "num_epochs": 50,
+    "early_stopping_criteria": 4,
     "learning_rate": 2e-5
 }
 
@@ -64,151 +65,6 @@ def set_seeds(seed, cuda):
 def create_dirs(dirpath):
     if not dirpath.exists():
         dirpath.mkdir(parents=True)
-
-
-def gather_last_relevant_hidden(hiddens, x_lengths):
-    x_lengths = x_lengths.long().detach().cpu().numpy() - 1
-    out = []
-    for batch_index, column_index in enumerate(x_lengths):
-        out.append(hiddens[batch_index, column_index])
-    return torch.stack(out)
-
-
-# 编码器
-class InsEncoder(nn.Module):
-    def __init__(self,
-                 embedding_dim,
-                 num_word_embeddings,
-                 num_char_embeddings,
-                 kernels,
-                 num_input_channels,
-                 num_output_channels,
-                 rnn_hidden_dim,
-                 num_layers,
-                 bidirectional,
-                 word_padding_idx=0,
-                 char_padding_idx=0):
-        super(InsEncoder, self).__init__()
-
-        self.num_layers = num_layers
-        self.bidirectional = bidirectional
-
-        # 嵌入层
-        self.word_embeddings = nn.Embedding(
-            num_embeddings=num_word_embeddings,
-            embedding_dim=embedding_dim,
-            padding_idx=word_padding_idx)
-        self.char_embeddings = nn.Embedding(
-            num_embeddings=num_char_embeddings,
-            embedding_dim=embedding_dim,
-            padding_idx=char_padding_idx)
-
-        # 卷积层权重
-        self.conv = nn.ModuleList([
-            nn.Conv1d(
-                in_channels=num_input_channels,
-                out_channels=num_output_channels,
-                kernel_size=kernel) for kernel in kernels
-        ])
-
-        # GRU层权重
-        self.gru = nn.GRU(
-            input_size=embedding_dim * (len(kernels) + 1),
-            hidden_size=rnn_hidden_dim,
-            num_layers=num_layers,
-            batch_first=True,
-            bidirectional=bidirectional)
-
-    def initialize_hidden_state(self, batch_size, rnn_hidden_dim, device):
-        num_directions = 2 if self.bidirectional else 1
-        hidden_t = torch.zeros(self.num_layers * num_directions, batch_size,
-                               rnn_hidden_dim).to(device)
-        return hidden_t
-
-    def get_char_level_embeddings(self, x):
-        # x: (N, seq_len, word_len)
-        batch_size, seq_len, word_len = x.size()
-        x = x.view(-1, word_len)  # (N * seq_len, word_len)
-
-        # 嵌入层
-        x = self.char_embeddings(x)  # (N * seq_len, word_len, embedding_dim)
-
-        # 重排使得num_input_channels在第一维 (N, embedding_dim, word_len)
-        x = x.transpose(1, 2)
-
-        # 卷积层
-        z = [F.relu(conv(x)) for conv in self.conv]
-
-        # 池化
-        z = [F.max_pool1d(zz, zz.size(2)).squeeze(2) for zz in z]
-        z = [zz.view(batch_size, seq_len, -1)
-             for zz in z]  # (N, seq_len, embedding_dim)
-
-        # 连接卷积输出得到字符级嵌入
-        z = torch.cat(z, 2)
-
-        return z
-
-    def forward(self, x_word, x_char, x_lengths, device):
-        # x_word: (N, seq_size)
-        # x_char: (N, seq_size, word_len)
-
-        # 词级嵌入层
-        z_word = self.word_embeddings(x_word)
-
-        # 字符级嵌入层
-        z_char = self.get_char_level_embeddings(x=x_char)
-
-        # 连接结果
-        z = torch.cat([z_word, z_char], 2)
-
-        # 向RNN输入
-        initial_h = self.initialize_hidden_state(
-            batch_size=z.size(0),
-            rnn_hidden_dim=self.gru.hidden_size,
-            device=device)
-        out, h_n = self.gru(z, initial_h)
-
-        return out
-
-
-# 解码器
-class InsDecoder(nn.Module):
-    def __init__(self, rnn_hidden_dim, hidden_dim, output_dim, dropout_p):
-        super(InsDecoder, self).__init__()
-
-        # 注意力机制的全连接模型
-        self.fc_attn = nn.Linear(rnn_hidden_dim, rnn_hidden_dim)
-        self.v = nn.Parameter(torch.rand(rnn_hidden_dim))
-
-        # 全连接参数
-        self.dropout = nn.Dropout(dropout_p)
-        self.fc1 = nn.Linear(rnn_hidden_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, output_dim)
-
-    def forward(self, encoder_outputs, apply_softmax=False):
-
-        # 注意力机制
-        z = torch.tanh(self.fc_attn(encoder_outputs))
-        z = z.transpose(2, 1)  # [B*H*T]
-        v = self.v.repeat(encoder_outputs.size(0), 1).unsqueeze(1)  # [B*1*H]
-        z = torch.bmm(v, z).squeeze(1)  # [B*T]
-        attn_scores = F.softmax(z, dim=1)
-        context = torch.matmul(
-            encoder_outputs.transpose(-2, -1),
-            attn_scores.unsqueeze(dim=2)).squeeze()
-        if len(context.size()) == 1:
-            context = context.unsqueeze(0)
-
-        # 全连接层
-        z = self.dropout(context)
-        z = self.fc1(z)
-        z = self.dropout(z)
-        y_pred = self.fc2(z)
-
-        if apply_softmax:
-            y_pred = F.softmax(y_pred, dim=1)
-        return attn_scores, y_pred
 
 
 class InsModel(nn.Module):
@@ -267,7 +123,7 @@ class Trainer(object):
         #    self.model.parameters(), lr=learning_rate)  # 新的优化方法
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer=self.optimizer, mode='min', factor=0.5, patience=1)
+            optimizer=self.optimizer, mode='min', factor=0.7, patience=1)
         self.train_state = {
             'done_training': False,
             'stop_early': False,
@@ -432,9 +288,12 @@ class Trainer(object):
             # self.train_state['val_loss'].append(loss_t)
             # self.train_state['val_acc'].append(acc_t)
 
+            # 学习率
+            self.scheduler.step(self.train_state['val_loss'][-1])
+            self.train_state['learning_rate'] = float(list(self.optimizer.param_groups)[-1]['lr'])
             self.train_state = update_train_state(
                 model=self.model, train_state=self.train_state)
-            self.scheduler.step(self.train_state['val_loss'][-1])
+
             if self.train_state['stop_early']:
                 break
 

@@ -17,7 +17,7 @@ from my_models.ODEnet import ODEfunc, ODEBlock, Flatten, norm
 from my_models.my_transformer import ST
 from gadgets.ggs import compute_accuracy, update_train_state, save_train_state, plot_performance, Confusion_matrix
 
-from Datasets.image_datasets import get_image_datasets
+from Datasets.img_datasets import get_image_datasets
 
 # 参数
 config = {
