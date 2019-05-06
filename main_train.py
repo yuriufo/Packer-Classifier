@@ -5,23 +5,25 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+# import torch.nn.functional as F
 import torch.optim as optim
 
 # import adabound
 
 import time
 import uuid
+import copy
+import numpy as np
 
-from my_models.ODEnet import SE_ODEfunc, ODEBlock, Flatten, norm
-from my_models.my_transformer import ST
 from gadgets.ggs import compute_accuracy, update_train_state, save_train_state, plot_performance, Confusion_matrix
 
-from Datasets.img_datasets import get_image_datasets
+from Datasets.datasets import get_datasets
+from my_models.En_De import InsEncoder, InsDecoder
+from my_models.ODEnet import ODEfunc, ODEBlock, Flatten, norm
 
 # 参数
 config = {
-    "seed": 7,
+    "seed": 22,
     "cuda": False,
     "shuffle": True,
     "train_state_file": "train_state.json",
@@ -29,11 +31,20 @@ config = {
     "model_state_file": "model.pth",
     "performance_img": "performance.png",
     "save_dir": Path.cwd() / "experiments",
+    "cutoff": 25,
+    "num_layers": 1,
+    "embedding_dim": 100,
+    "kernels": [3, 5],
+    "num_filters": 100,
+    "rnn_hidden_dim": 64,
+    "hidden_dim": 36,
+    "dropout_p": 0.3,
+    "bidirectional": False,
     "state_size": [0.7, 0.15, 0.15],  # [训练, 验证, 测试]
-    "batch_size": 64,
-    "num_epochs": 15,
-    "early_stopping_criteria": 3,
-    "learning_rate": 3e-4
+    "batch_size": 20,
+    "num_epochs": 50,
+    "early_stopping_criteria": 4,
+    "learning_rate": 2e-5
 }
 
 
@@ -57,51 +68,24 @@ def create_dirs(dirpath):
         dirpath.mkdir(parents=True)
 
 
-# (W-F+2P)/S
-# (W-F)/S + 1
-# ODEnet模型
-class my_ODEnet(nn.Module):
-    def __init__(self,
-                 input_dim,
-                 state_dim,
-                 output_dim,
-                 reduction=16,
-                 tol=1e-3):
-        super(my_ODEnet, self).__init__()
-        # 输入shape：(3,32,32)
-        self.transformer = ST()
+class InsModel(nn.Module):
+    def __init__(self, embedding_dim, num_word_embeddings, num_char_embeddings,
+                 kernels, num_input_channels, num_output_channels,
+                 rnn_hidden_dim, hidden_dim, output_dim, num_layers,
+                 bidirectional, dropout_p, word_padding_idx, char_padding_idx):
+        super(InsModel, self).__init__()
 
-        self.downsampling_layers = nn.Sequential(
-            nn.Conv2d(input_dim, state_dim, 3, 1), norm(state_dim),
-            nn.ReLU(inplace=True), nn.Conv2d(state_dim, state_dim, 4, 2, 1),
-            norm(state_dim), nn.ReLU(inplace=True),
-            nn.Conv2d(state_dim, state_dim, 4, 2, 1))
+        self.encoder = InsEncoder(
+            embedding_dim, num_word_embeddings, num_char_embeddings, kernels,
+            num_input_channels, num_output_channels, rnn_hidden_dim,
+            num_layers, bidirectional, word_padding_idx, char_padding_idx)
+        self.decoder = InsDecoder(rnn_hidden_dim, hidden_dim, output_dim,
+                                  dropout_p)
 
-        self.feature_layers = ODEBlock(
-            SE_ODEfunc(state_dim, reduction), rtol=tol, atol=tol)
-
-        self.fc_layers = nn.Sequential(
-            norm(state_dim), nn.ReLU(inplace=True), nn.AdaptiveAvgPool2d(1),
-            Flatten(), nn.Linear(state_dim, output_dim))
-
-    def forward(self, x_in, apply_softmax=False):
-        out = self.transformer(x_in)
-        out = self.downsampling_layers(x_in)
-        out = self.feature_layers(out)
-        out = self.fc_layers(out)
-
-        if apply_softmax:
-            out = F.softmax(out, dim=1)
-
-        return out
-
-    @property
-    def nfe(self):
-        return self.feature_layers.nfe
-
-    @nfe.setter
-    def nfe(self, value):
-        self.feature_layers.nfe = value
+    def forward(self, x_word, x_char, x_lengths, device, apply_softmax=False):
+        encoder_outputs = self.encoder(x_word, x_char, x_lengths, device)
+        y_pred = self.decoder(encoder_outputs, apply_softmax)
+        return y_pred
 
 
 def init():
@@ -140,7 +124,7 @@ class Trainer(object):
         #    self.model.parameters(), lr=learning_rate)  # 新的优化方法
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer=self.optimizer, mode='min', factor=0.5, patience=1)
+            optimizer=self.optimizer, mode='min', factor=0.7, patience=1)
         self.train_state = {
             'done_training': False,
             'stop_early': False,
@@ -161,6 +145,59 @@ class Trainer(object):
             "b_nfe": []
         }
 
+    def pad_word_seq(self, seq, length):
+        vector = np.zeros(length, dtype=np.int64)
+        vector[:len(seq)] = seq
+        vector[len(seq):] = self.dataset.vectorizer.ins_word_vocab.mask_index
+        return vector
+
+    def pad_char_seq(self, seq, seq_length, word_length):
+        vector = np.zeros((seq_length, word_length), dtype=np.int64)
+        vector.fill(self.dataset.vectorizer.ins_char_vocab.mask_index)
+        for i in range(len(seq)):
+            char_padding = np.zeros(word_length - len(seq[i]), dtype=np.int64)
+            vector[i] = np.concatenate((seq[i], char_padding), axis=None)
+        return vector
+
+    def collate_fn(self, batch):
+
+        # 深度拷贝
+        batch_copy = copy.deepcopy(batch)
+        processed_batch = {
+            'ins_word_vector': [],
+            'ins_char_vector': [],
+            'ins_length': [],
+            'packer': []
+        }
+
+        # 得到最长序列长度
+        max_seq_length = max(
+            [len(sample["ins_word_vector"]) for sample in batch_copy])
+        max_word_length = max(
+            [len(sample["ins_char_vector"][0]) for sample in batch_copy])
+
+        # 填充
+        for i, sample in enumerate(batch_copy):
+            padded_word_seq = self.pad_word_seq(sample["ins_word_vector"],
+                                                max_seq_length)
+            padded_cahr_seq = self.pad_char_seq(
+                sample["ins_char_vector"], max_seq_length, max_word_length)
+            processed_batch["ins_word_vector"].append(padded_word_seq)
+            processed_batch["ins_char_vector"].append(padded_cahr_seq)
+            processed_batch["ins_length"].append(sample["ins_length"])
+            processed_batch["packer"].append(sample["packer"])
+
+        # 转换为合适的tensor
+        processed_batch["ins_word_vector"] = torch.LongTensor(
+            processed_batch["ins_word_vector"])
+        processed_batch["ins_char_vector"] = torch.LongTensor(
+            processed_batch["ins_char_vector"])
+        processed_batch["ins_length"] = torch.LongTensor(
+            processed_batch["ins_length"])
+        processed_batch["packer"] = torch.LongTensor(processed_batch["packer"])
+
+        return processed_batch
+
     def run_train_loop(self):
         print("---->>>   Training:")
         for epoch_index in range(self.num_epochs):
@@ -168,41 +205,40 @@ class Trainer(object):
 
             # 遍历训练集
 
+            torch.cuda.empty_cache()
+
             # 初始化批生成器, 设置为训练模式，损失和准确率归零
             self.dataset.set_split('train')
             batch_generator = self.dataset.generate_batches(
                 batch_size=self.batch_size,
+                collate_fn=self.collate_fn,
                 shuffle=self.shuffle,
                 device=self.device)
             running_loss = 0.0
             running_acc = 0.0
-            f_nfe, b_nfe = 0.0, 0.0
             self.model.train()
-            self.model.nfe = 0
 
             for batch_index, batch_dict in enumerate(batch_generator):
                 # 梯度归零
                 self.optimizer.zero_grad()
 
                 # 计算输出
-                y_pred = self.model(batch_dict['image'])
+                _, y_pred = self.model(
+                    x_word=batch_dict['ins_word_vector'],
+                    x_char=batch_dict['ins_char_vector'],
+                    x_lengths=batch_dict['ins_length'],
+                    device=self.device)
 
                 # 计算损失
                 loss = self.loss_func(y_pred, batch_dict['packer'])
                 loss_t = loss.item()
                 running_loss += (loss_t - running_loss) / (batch_index + 1)
 
-                f_nfe += (self.model.nfe - f_nfe) / (batch_index + 1)
-                self.model.nfe = 0
-
                 # 反向传播
                 loss.backward()
 
                 # 更新梯度
                 self.optimizer.step()
-
-                b_nfe += (self.model.nfe - b_nfe) / (batch_index + 1)
-                self.model.nfe = 0
 
                 # 计算准确率
                 acc_t = compute_accuracy(y_pred, batch_dict['packer'])
@@ -212,15 +248,18 @@ class Trainer(object):
             self.train_state['train_acc'].append(running_acc)
             # self.train_state['train_loss'].append(loss_t)
             # self.train_state['train_acc'].append(acc_t)
-            self.train_state['f_nfe'].append(f_nfe)
-            self.train_state['b_nfe'].append(b_nfe)
+            self.train_state['f_nfe'].append(0.0)
+            self.train_state['b_nfe'].append(0.0)
 
             # 遍历验证集
+
+            torch.cuda.empty_cache()
 
             # 初始化批生成器, 设置为验证模式，损失和准确率归零
             self.dataset.set_split('val')
             batch_generator = self.dataset.generate_batches(
                 batch_size=self.batch_size,
+                collate_fn=self.collate_fn,
                 shuffle=self.shuffle,
                 device=self.device)
             running_loss = 0.0
@@ -230,7 +269,11 @@ class Trainer(object):
             for batch_index, batch_dict in enumerate(batch_generator):
 
                 # 计算输出
-                y_pred = self.model(batch_dict['image'])
+                _, y_pred = self.model(
+                    x_word=batch_dict['ins_word_vector'],
+                    x_char=batch_dict['ins_char_vector'],
+                    x_lengths=batch_dict['ins_length'],
+                    device=self.device)
 
                 # 计算损失
                 loss = self.loss_func(y_pred, batch_dict['packer'])
@@ -248,18 +291,21 @@ class Trainer(object):
 
             # 学习率
             self.scheduler.step(self.train_state['val_loss'][-1])
-            self.train_state['learning_rate'] = float(
-                list(self.optimizer.param_groups)[-1]['lr'])
+            self.train_state['learning_rate'] = float(list(self.optimizer.param_groups)[-1]['lr'])
             self.train_state = update_train_state(
                 model=self.model, train_state=self.train_state)
+
             if self.train_state['stop_early']:
                 break
 
     def run_test_loop(self):
+        torch.cuda.empty_cache()
+
         # 初始化批生成器, 设置为测试模式，损失和准确率归零
         self.dataset.set_split('test')
         batch_generator = self.dataset.generate_batches(
             batch_size=self.batch_size,
+            collate_fn=self.collate_fn,
             shuffle=self.shuffle,
             device=self.device)
         running_loss = 0.0
@@ -271,7 +317,11 @@ class Trainer(object):
 
         for batch_index, batch_dict in enumerate(batch_generator):
             # 计算输出
-            y_pred = self.model(batch_dict['image'])
+            _, y_pred = self.model(
+                x_word=batch_dict['ins_word_vector'],
+                x_char=batch_dict['ins_char_vector'],
+                x_lengths=batch_dict['ins_length'],
+                device=self.device)
 
             # 计算损失
             loss = self.loss_func(y_pred, batch_dict['packer'])
@@ -300,7 +350,7 @@ class Trainer(object):
 
 def train():
     # 加载数据集
-    dataset = get_image_datasets(
+    dataset = get_datasets(
         csv_path=r"F:\my_packer\csv\train_data_20190429.pkl",
         randam_seed=config["seed"],
         state_size=config["state_size"],
@@ -308,10 +358,22 @@ def train():
     # 保存向量器
     dataset.save_vectorizer(config["save_dir"] / config["vectorizer_file"])
     # 初始化神经网络
-    model = my_ODEnet(
-        input_dim=3,
-        output_dim=len(dataset.vectorizer.packer_vocab),
-        state_dim=64)
+    vectorizer = dataset.vectorizer
+    model = InsModel(
+        embedding_dim=config["embedding_dim"],
+        num_word_embeddings=len(vectorizer.ins_word_vocab),
+        num_char_embeddings=len(vectorizer.ins_char_vocab),
+        kernels=config["kernels"],
+        num_input_channels=config["embedding_dim"],
+        num_output_channels=config["num_filters"],
+        rnn_hidden_dim=config["rnn_hidden_dim"],
+        hidden_dim=config["hidden_dim"],
+        output_dim=len(vectorizer.packer_vocab),
+        num_layers=config["num_layers"],
+        bidirectional=config["bidirectional"],
+        dropout_p=config["dropout_p"],
+        word_padding_idx=vectorizer.ins_word_vocab.mask_index,
+        char_padding_idx=vectorizer.ins_char_vocab.mask_index)
     print(model.named_modules)
 
     # 初始化训练器

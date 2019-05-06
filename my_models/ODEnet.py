@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchdiffeq import odeint_adjoint as odeint
+from my_models.SE_ResNet import SELayer
 
 
 def norm(dim):
@@ -33,10 +34,39 @@ class ODEfunc(nn.Module):
         out = self.norm1(x)
         out = self.relu(out)
         out = self.conv1(out)
+
         out = self.norm2(out)
         out = self.relu(out)
         out = self.conv2(out)
+
         out = self.norm3(out)
+        return out
+
+
+class SE_ODEfunc(nn.Module):
+    def __init__(self, dim, reduction):
+        super(SE_ODEfunc, self).__init__()
+        self.norm1 = norm(dim)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv1 = nn.Conv2d(dim, dim, 3, 1, 1)
+        self.norm2 = norm(dim)
+        self.conv2 = nn.Conv2d(dim, dim, 3, 1, 1)
+        self.norm3 = norm(dim)
+        self.se = SELayer(dim, reduction)
+        self.nfe = 0
+
+    def forward(self, t, x):
+        self.nfe += 1
+        out = self.norm1(x)
+        out = self.relu(out)
+        out = self.conv1(out)
+
+        out = self.norm2(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+
+        out = self.norm3(out)
+        out = self.se(out)
         return out
 
 
