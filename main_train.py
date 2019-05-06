@@ -5,7 +5,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-# import torch.nn.functional as F
+import torch.nn.functional as F
 import torch.optim as optim
 
 # import adabound
@@ -18,8 +18,8 @@ import numpy as np
 from gadgets.ggs import compute_accuracy, update_train_state, save_train_state, plot_performance, Confusion_matrix
 
 from Datasets.datasets import get_datasets
-from my_models.En_De import InsEncoder, InsDecoder
-from my_models.ODEnet import ODEfunc, ODEBlock, Flatten, norm
+from ins_train import InsModel
+from img_train import IngModel
 
 # 参数
 config = {
@@ -31,6 +31,12 @@ config = {
     "model_state_file": "model.pth",
     "performance_img": "performance.png",
     "save_dir": Path.cwd() / "experiments",
+    # ODEnet
+    "input_dim": 3,
+    "state_dim": 64,
+    "reduction": 16,
+    "tol": 1e-3,
+    # GRU
     "cutoff": 25,
     "num_layers": 1,
     "embedding_dim": 100,
@@ -38,10 +44,11 @@ config = {
     "num_filters": 100,
     "rnn_hidden_dim": 64,
     "hidden_dim": 36,
-    "dropout_p": 0.3,
+    "dropout_p": 0.5,
     "bidirectional": False,
-    "state_size": [0.7, 0.15, 0.15],  # [训练, 验证, 测试]
-    "batch_size": 20,
+    # 超参数, [训练, 验证, 测试]
+    "state_size": [0.7, 0.15, 0.15],
+    "batch_size": 16,
     "num_epochs": 50,
     "early_stopping_criteria": 4,
     "learning_rate": 2e-5
@@ -68,24 +75,75 @@ def create_dirs(dirpath):
         dirpath.mkdir(parents=True)
 
 
-class InsModel(nn.Module):
-    def __init__(self, embedding_dim, num_word_embeddings, num_char_embeddings,
-                 kernels, num_input_channels, num_output_channels,
-                 rnn_hidden_dim, hidden_dim, output_dim, num_layers,
-                 bidirectional, dropout_p, word_padding_idx, char_padding_idx):
-        super(InsModel, self).__init__()
+class MainModel(nn.Module):
+    def __init__(self,
+                 input_dim,
+                 state_dim,
+                 output_dim,
+                 reduction,
+                 tol,
+                 embedding_dim,
+                 num_word_embeddings,
+                 num_char_embeddings,
+                 kernels,
+                 num_input_channels,
+                 num_output_channels,
+                 rnn_hidden_dim,
+                 hidden_dim,
+                 num_layers,
+                 bidirectional,
+                 dropout_p,
+                 word_padding_idx,
+                 char_padding_idx):
+        super(MainModel, self).__init__()
 
-        self.encoder = InsEncoder(
-            embedding_dim, num_word_embeddings, num_char_embeddings, kernels,
-            num_input_channels, num_output_channels, rnn_hidden_dim,
-            num_layers, bidirectional, word_padding_idx, char_padding_idx)
-        self.decoder = InsDecoder(rnn_hidden_dim, hidden_dim, output_dim,
-                                  dropout_p)
+        self.img_layer = IngModel(
+            input_dim=input_dim,
+            output_dim=output_dim,
+            state_dim=state_dim,
+            reduction=reduction,
+            tol=tol)
 
-    def forward(self, x_word, x_char, x_lengths, device, apply_softmax=False):
-        encoder_outputs = self.encoder(x_word, x_char, x_lengths, device)
-        y_pred = self.decoder(encoder_outputs, apply_softmax)
-        return y_pred
+        self.ins_layer = InsModel(
+            embedding_dim=embedding_dim,
+            num_word_embeddings=num_word_embeddings,
+            num_char_embeddings=num_char_embeddings,
+            kernels=kernels,
+            num_input_channels=num_input_channels,
+            num_output_channels=num_output_channels,
+            rnn_hidden_dim=rnn_hidden_dim,
+            hidden_dim=hidden_dim,
+            output_dim=output_dim,
+            num_layers=num_layers,
+            bidirectional=bidirectional,
+            dropout_p=dropout_p,
+            word_padding_idx=word_padding_idx,
+            char_padding_idx=char_padding_idx)
+
+        # classifier
+        self.classifier = nn.Sequential(
+            nn.ReLU(inplace=True), nn.Dropout(dropout_p),
+            nn.Linear(output_dim * 2, output_dim, bias=True))
+
+    def forward(self,
+                x_img,
+                x_word,
+                x_char,
+                x_lengths,
+                device,
+                apply_softmax=False):
+
+        img_out = self.img_layer(x_img)
+        attn_scores, ins_out = self.ins_layer(x_word, x_char, x_lengths,
+                                              device)
+
+        x_cat = torch.cat((img_out, ins_out), 1)
+
+        y_pred = self.classifier(x_cat)
+        if apply_softmax:
+            y_pred = F.softmax(y_pred, dim=1)
+
+        return attn_scores, y_pred
 
 
 def init():
@@ -124,7 +182,7 @@ class Trainer(object):
         #    self.model.parameters(), lr=learning_rate)  # 新的优化方法
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer=self.optimizer, mode='min', factor=0.7, patience=1)
+            optimizer=self.optimizer, mode='min', factor=0.5, patience=1)
         self.train_state = {
             'done_training': False,
             'stop_early': False,
@@ -164,6 +222,7 @@ class Trainer(object):
         # 深度拷贝
         batch_copy = copy.deepcopy(batch)
         processed_batch = {
+            'image_vector': [],
             'ins_word_vector': [],
             'ins_char_vector': [],
             'ins_length': [],
@@ -182,12 +241,15 @@ class Trainer(object):
                                                 max_seq_length)
             padded_cahr_seq = self.pad_char_seq(
                 sample["ins_char_vector"], max_seq_length, max_word_length)
+            processed_batch["image_vector"].append(sample["image_vector"])
             processed_batch["ins_word_vector"].append(padded_word_seq)
             processed_batch["ins_char_vector"].append(padded_cahr_seq)
             processed_batch["ins_length"].append(sample["ins_length"])
             processed_batch["packer"].append(sample["packer"])
 
         # 转换为合适的tensor
+        processed_batch["image_vector"] = torch.FloatTensor(
+            processed_batch["image_vector"])
         processed_batch["ins_word_vector"] = torch.LongTensor(
             processed_batch["ins_word_vector"])
         processed_batch["ins_char_vector"] = torch.LongTensor(
@@ -216,6 +278,8 @@ class Trainer(object):
                 device=self.device)
             running_loss = 0.0
             running_acc = 0.0
+            f_nfe, b_nfe = 0.0, 0.0
+            self.model.nfe = 0
             self.model.train()
 
             for batch_index, batch_dict in enumerate(batch_generator):
@@ -224,6 +288,7 @@ class Trainer(object):
 
                 # 计算输出
                 _, y_pred = self.model(
+                    x_img=batch_dict['image_vector'],
                     x_word=batch_dict['ins_word_vector'],
                     x_char=batch_dict['ins_char_vector'],
                     x_lengths=batch_dict['ins_length'],
@@ -234,11 +299,17 @@ class Trainer(object):
                 loss_t = loss.item()
                 running_loss += (loss_t - running_loss) / (batch_index + 1)
 
+                f_nfe += (self.model.img_layer.nfe - f_nfe) / (batch_index + 1)
+                self.model.img_layer.nfe = 0
+
                 # 反向传播
                 loss.backward()
 
                 # 更新梯度
                 self.optimizer.step()
+
+                b_nfe += (self.model.img_layer.nfe - b_nfe) / (batch_index + 1)
+                self.model.img_layer.nfe = 0
 
                 # 计算准确率
                 acc_t = compute_accuracy(y_pred, batch_dict['packer'])
@@ -248,8 +319,8 @@ class Trainer(object):
             self.train_state['train_acc'].append(running_acc)
             # self.train_state['train_loss'].append(loss_t)
             # self.train_state['train_acc'].append(acc_t)
-            self.train_state['f_nfe'].append(0.0)
-            self.train_state['b_nfe'].append(0.0)
+            self.train_state['f_nfe'].append(f_nfe)
+            self.train_state['b_nfe'].append(b_nfe)
 
             # 遍历验证集
 
@@ -270,6 +341,7 @@ class Trainer(object):
 
                 # 计算输出
                 _, y_pred = self.model(
+                    x_img=batch_dict['image_vector'],
                     x_word=batch_dict['ins_word_vector'],
                     x_char=batch_dict['ins_char_vector'],
                     x_lengths=batch_dict['ins_length'],
@@ -291,7 +363,8 @@ class Trainer(object):
 
             # 学习率
             self.scheduler.step(self.train_state['val_loss'][-1])
-            self.train_state['learning_rate'] = float(list(self.optimizer.param_groups)[-1]['lr'])
+            self.train_state['learning_rate'] = float(
+                list(self.optimizer.param_groups)[-1]['lr'])
             self.train_state = update_train_state(
                 model=self.model, train_state=self.train_state)
 
@@ -318,6 +391,7 @@ class Trainer(object):
         for batch_index, batch_dict in enumerate(batch_generator):
             # 计算输出
             _, y_pred = self.model(
+                x_img=batch_dict['image_vector'],
                 x_word=batch_dict['ins_word_vector'],
                 x_char=batch_dict['ins_char_vector'],
                 x_lengths=batch_dict['ins_length'],
@@ -359,7 +433,11 @@ def train():
     dataset.save_vectorizer(config["save_dir"] / config["vectorizer_file"])
     # 初始化神经网络
     vectorizer = dataset.vectorizer
-    model = InsModel(
+    model = MainModel(
+        input_dim=config["input_dim"],
+        state_dim=config["state_dim"],
+        reduction=config["reduction"],
+        tol=config["tol"],
         embedding_dim=config["embedding_dim"],
         num_word_embeddings=len(vectorizer.ins_word_vocab),
         num_char_embeddings=len(vectorizer.ins_char_vocab),

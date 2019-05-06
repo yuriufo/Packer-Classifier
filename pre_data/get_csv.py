@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import settings as sts
+import pre_data.settings as sts
 from binascii import unhexlify
 import pandas as pd
 import numpy as np

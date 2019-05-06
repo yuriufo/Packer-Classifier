@@ -11,10 +11,10 @@ from torch.utils.data import Dataset, DataLoader
 import torch
 import pre_data.settings as sts
 from collections import Counter
-# from tqdm import tqdm
+from tqdm import tqdm
 
-from img_datasets import Vocabulary, IMG_SequenceVocabulary
-from ins_datasets import INS_SequenceVocabulary
+from Datasets.img_datasets import Vocabulary, IMG_SequenceVocabulary
+from Datasets.ins_datasets import INS_SequenceVocabulary
 
 __all__ = ["get_datasets"]
 
@@ -230,7 +230,7 @@ class Dataset(Dataset):
             collate_fn=collate_fn,
             shuffle=shuffle,
             drop_last=drop_last)
-        for data_dict in dataloader:
+        for data_dict in tqdm(dataloader):
             out_data_dict = {}
             for name, tensor in data_dict.items():
                 out_data_dict[name] = data_dict[name].to(device)

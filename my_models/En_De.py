@@ -113,10 +113,10 @@ class InsDecoder(nn.Module):
         self.v = nn.Parameter(torch.rand(rnn_hidden_dim))
 
         # 全连接参数
-        self.dropout = nn.Dropout(dropout_p)
-        self.fc1 = nn.Linear(rnn_hidden_dim, hidden_dim)
-        self.relu = nn.ReLU(inplace=True)
-        self.fc2 = nn.Linear(hidden_dim, output_dim)
+        self.fc_layers = nn.Sequential(
+            nn.Dropout(dropout_p), nn.Linear(rnn_hidden_dim, hidden_dim),
+            nn.ReLU(inplace=True), nn.Dropout(dropout_p),
+            nn.Linear(hidden_dim, output_dim))
 
     def forward(self, encoder_outputs, apply_softmax=False):
 
@@ -133,11 +133,7 @@ class InsDecoder(nn.Module):
             context = context.unsqueeze(0)
 
         # 全连接层
-        z = self.dropout(context)
-        z = self.fc1(z)
-        z = self.relu(z)
-        z = self.dropout(z)
-        y_pred = self.fc2(z)
+        y_pred = self.fc_layers(context)
 
         if apply_softmax:
             y_pred = F.softmax(y_pred, dim=1)

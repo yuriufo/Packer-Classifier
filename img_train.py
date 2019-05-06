@@ -14,7 +14,7 @@ import time
 import uuid
 
 from my_models.ODEnet import SE_ODEfunc, ODEBlock, Flatten, norm
-from my_models.my_transformer import ST
+# from my_models.my_transformer import ST
 from gadgets.ggs import compute_accuracy, update_train_state, save_train_state, plot_performance, Confusion_matrix
 
 from Datasets.img_datasets import get_image_datasets
@@ -60,16 +60,16 @@ def create_dirs(dirpath):
 # (W-F+2P)/S
 # (W-F)/S + 1
 # ODEnet模型
-class my_ODEnet(nn.Module):
+class IngModel(nn.Module):
     def __init__(self,
                  input_dim,
                  state_dim,
                  output_dim,
                  reduction=16,
                  tol=1e-3):
-        super(my_ODEnet, self).__init__()
+        super(IngModel, self).__init__()
         # 输入shape：(3,32,32)
-        self.transformer = ST()
+        # self.transformer = ST()
 
         self.downsampling_layers = nn.Sequential(
             nn.Conv2d(input_dim, state_dim, 3, 1), norm(state_dim),
@@ -85,7 +85,7 @@ class my_ODEnet(nn.Module):
             Flatten(), nn.Linear(state_dim, output_dim))
 
     def forward(self, x_in, apply_softmax=False):
-        out = self.transformer(x_in)
+        # out = self.transformer(x_in)
         out = self.downsampling_layers(x_in)
         out = self.feature_layers(out)
         out = self.fc_layers(out)
@@ -308,7 +308,7 @@ def train():
     # 保存向量器
     dataset.save_vectorizer(config["save_dir"] / config["vectorizer_file"])
     # 初始化神经网络
-    model = my_ODEnet(
+    model = IngModel(
         input_dim=3,
         output_dim=len(dataset.vectorizer.packer_vocab),
         state_dim=64)
