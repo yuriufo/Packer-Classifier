@@ -8,7 +8,6 @@ from PIL import Image
 import numpy as np
 import json
 import matplotlib.pyplot as plt
-import torch
 from sklearn.metrics import confusion_matrix
 
 
@@ -118,8 +117,38 @@ def plot_performance(train_state, save_dir, show_plot=True):
         # print("---->>>   Metric plots:")
         plt.show()
 
+    plt.close()
 
-def Confusion_matrix(y_pred, y_target):
-    cm = confusion_matrix([i.cpu().numpy().tolist() for i in y_target],
-                          [i.cpu().numpy().tolist() for i in y_pred])
-    print(cm)
+
+def Confusion_matrix(y_pred, y_target, classes_name, save_dir, show_plot=True):
+    y_target = [i.cpu().numpy().tolist() for i in y_target]
+    y_pred = [i.cpu().numpy().tolist() for i in y_pred]
+    cm_mat = confusion_matrix(y_target, y_pred)
+
+    cmap = plt.cm.get_cmap(
+        'Greys'
+    )  # 更多颜色: http://matplotlib.org/examples/color/colormaps_reference.html
+    plt.imshow(cm_mat, cmap=cmap)
+    plt.colorbar()
+
+    # 设置文字
+    xlocations = np.array(range(len(classes_name)))
+    plt.xticks(xlocations, classes_name, rotation=60)
+    plt.yticks(xlocations, classes_name)
+    plt.xlabel('Predict label')
+    plt.ylabel('True label')
+    plt.title('Confusion_Matrix')
+
+    # 打印数字
+    for i in range(cm_mat.shape[0]):
+        for j in range(cm_mat.shape[1]):
+            plt.text(x=j, y=i, s=int(cm_mat[i, j]), va='center', ha='center', color='red', fontsize=10)
+
+    # 保存
+    plt.savefig(str(save_dir))
+
+    if show_plot:
+        # print("---->>>   Confusion Matrix:")
+        plt.show()
+
+    plt.close()

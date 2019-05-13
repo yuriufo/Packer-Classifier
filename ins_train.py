@@ -29,7 +29,8 @@ config = {
     "vectorizer_file": "vectorizer.json",
     "model_state_file": "model.pth",
     "performance_img": "performance.png",
-    "save_dir": Path.cwd() / "experiments",
+    "confusion_matrix_img": "confusion_matrix_img.png",
+    "save_dir": Path.cwd() / "experiments" / "ins",
     "cutoff": 25,
     "num_layers": 1,
     "embedding_dim": 100,
@@ -337,9 +338,20 @@ class Trainer(object):
         self.train_state['test_loss'] = running_loss
         self.train_state['test_acc'] = running_acc
 
+        classes_name = [
+            self.dataset.vectorizer.packer_vocab.lookup_index(i)
+            for i in range(
+                len(set([j.cpu().numpy().tolist() for j in all_pack])))
+        ]
+
         # 混淆矩阵
-        print("---->>>   Confusion Matrix:")
-        Confusion_matrix(all_pred, all_pack)
+        # print("---->>>   Confusion Matrix:")
+        Confusion_matrix(
+            y_pred=all_pred,
+            y_target=all_pack,
+            classes_name=classes_name,
+            save_dir=config["save_dir"] / config["confusion_matrix_img"],
+            show_plot=False)
 
         # 详细信息
         print("---->>>   Test performance:")

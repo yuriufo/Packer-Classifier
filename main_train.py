@@ -17,20 +17,23 @@ import numpy as np
 
 from gadgets.ggs import compute_accuracy, update_train_state, save_train_state, plot_performance, Confusion_matrix
 
+from my_models.ODEnet import Flatten, norm
+
 from Datasets.datasets import get_datasets
 from ins_train import InsModel
 from img_train import IngModel
 
 # 参数
 config = {
-    "seed": 22,
+    "seed": 4396,
     "cuda": False,
     "shuffle": True,
     "train_state_file": "train_state.json",
     "vectorizer_file": "vectorizer.json",
     "model_state_file": "model.pth",
     "performance_img": "performance.png",
-    "save_dir": Path.cwd() / "experiments",
+    "confusion_matrix_img": "confusion_matrix_img.png",
+    "save_dir": Path.cwd() / "experiments" / "main",
     # ODEnet
     "input_dim": 3,
     "state_dim": 64,
@@ -44,14 +47,14 @@ config = {
     "num_filters": 100,
     "rnn_hidden_dim": 64,
     "hidden_dim": 36,
-    "dropout_p": 0.5,
+    "dropout_p": 0.4,
     "bidirectional": False,
     # 超参数, [训练, 验证, 测试]
     "state_size": [0.7, 0.15, 0.15],
     "batch_size": 16,
-    "num_epochs": 50,
+    "num_epochs": 60,
     "early_stopping_criteria": 4,
-    "learning_rate": 2e-5
+    "learning_rate": 4e-5
 }
 
 
@@ -76,25 +79,11 @@ def create_dirs(dirpath):
 
 
 class MainModel(nn.Module):
-    def __init__(self,
-                 input_dim,
-                 state_dim,
-                 output_dim,
-                 reduction,
-                 tol,
-                 embedding_dim,
-                 num_word_embeddings,
-                 num_char_embeddings,
-                 kernels,
-                 num_input_channels,
-                 num_output_channels,
-                 rnn_hidden_dim,
-                 hidden_dim,
-                 num_layers,
-                 bidirectional,
-                 dropout_p,
-                 word_padding_idx,
-                 char_padding_idx):
+    def __init__(self, input_dim, state_dim, output_dim, reduction, tol,
+                 embedding_dim, num_word_embeddings, num_char_embeddings,
+                 kernels, num_input_channels, num_output_channels,
+                 rnn_hidden_dim, hidden_dim, num_layers, bidirectional,
+                 dropout_p, word_padding_idx, char_padding_idx):
         super(MainModel, self).__init__()
 
         self.img_layer = IngModel(
@@ -120,10 +109,17 @@ class MainModel(nn.Module):
             word_padding_idx=word_padding_idx,
             char_padding_idx=char_padding_idx)
 
+        # 修改全连接层
+        self.img_layer.fc_layers = nn.Sequential(
+            norm(state_dim), nn.ReLU(inplace=True), nn.AdaptiveAvgPool2d(1),
+            Flatten())
+        self.ins_layer.decoder.fc_layers = nn.Sequential(
+            nn.Dropout(dropout_p), nn.Linear(rnn_hidden_dim, hidden_dim))
+
         # classifier
         self.classifier = nn.Sequential(
             nn.ReLU(inplace=True), nn.Dropout(dropout_p),
-            nn.Linear(output_dim * 2, output_dim, bias=True))
+            nn.Linear(hidden_dim + state_dim, output_dim, bias=True))
 
     def forward(self,
                 x_img,
@@ -276,9 +272,9 @@ class Trainer(object):
                 collate_fn=self.collate_fn,
                 shuffle=self.shuffle,
                 device=self.device)
-            running_loss = 0.0
-            running_acc = 0.0
-            f_nfe, b_nfe = 0.0, 0.0
+            running_loss = []
+            running_acc = []
+            f_nfe, b_nfe = [], []
             self.model.nfe = 0
             self.model.train()
 
@@ -297,9 +293,9 @@ class Trainer(object):
                 # 计算损失
                 loss = self.loss_func(y_pred, batch_dict['packer'])
                 loss_t = loss.item()
-                running_loss += (loss_t - running_loss) / (batch_index + 1)
+                running_loss.append(loss_t)
 
-                f_nfe += (self.model.img_layer.nfe - f_nfe) / (batch_index + 1)
+                f_nfe.append(self.model.img_layer.nfe)
                 self.model.img_layer.nfe = 0
 
                 # 反向传播
@@ -308,19 +304,21 @@ class Trainer(object):
                 # 更新梯度
                 self.optimizer.step()
 
-                b_nfe += (self.model.img_layer.nfe - b_nfe) / (batch_index + 1)
+                b_nfe.append(self.model.img_layer.nfe)
                 self.model.img_layer.nfe = 0
 
                 # 计算准确率
                 acc_t = compute_accuracy(y_pred, batch_dict['packer'])
-                running_acc += (acc_t - running_acc) / (batch_index + 1)
+                running_acc.append(acc_t)
 
-            self.train_state['train_loss'].append(running_loss)
-            self.train_state['train_acc'].append(running_acc)
+            self.train_state['train_loss'].append(
+                sum(running_loss) / len(running_loss))
+            self.train_state['train_acc'].append(
+                sum(running_acc) / len(running_acc))
             # self.train_state['train_loss'].append(loss_t)
             # self.train_state['train_acc'].append(acc_t)
-            self.train_state['f_nfe'].append(f_nfe)
-            self.train_state['b_nfe'].append(b_nfe)
+            self.train_state['f_nfe'].append(sum(f_nfe) / len(f_nfe))
+            self.train_state['b_nfe'].append(sum(b_nfe) / len(b_nfe))
 
             # 遍历验证集
 
@@ -333,8 +331,8 @@ class Trainer(object):
                 collate_fn=self.collate_fn,
                 shuffle=self.shuffle,
                 device=self.device)
-            running_loss = 0.0
-            running_acc = 0.0
+            running_loss = []
+            running_acc = []
             self.model.eval()
 
             for batch_index, batch_dict in enumerate(batch_generator):
@@ -350,14 +348,16 @@ class Trainer(object):
                 # 计算损失
                 loss = self.loss_func(y_pred, batch_dict['packer'])
                 loss_t = loss.item()
-                running_loss += (loss_t - running_loss) / (batch_index + 1)
+                running_loss.append(loss_t)
 
                 # 计算准确率
                 acc_t = compute_accuracy(y_pred, batch_dict['packer'])
-                running_acc += (acc_t - running_acc) / (batch_index + 1)
+                running_acc.append(acc_t)
 
-            self.train_state['val_loss'].append(running_loss)
-            self.train_state['val_acc'].append(running_acc)
+            self.train_state['val_loss'].append(
+                sum(running_loss) / len(running_loss))
+            self.train_state['val_acc'].append(
+                sum(running_acc) / len(running_acc))
             # self.train_state['val_loss'].append(loss_t)
             # self.train_state['val_acc'].append(acc_t)
 
@@ -381,8 +381,8 @@ class Trainer(object):
             collate_fn=self.collate_fn,
             shuffle=self.shuffle,
             device=self.device)
-        running_loss = 0.0
-        running_acc = 0.0
+        running_loss = []
+        running_acc = []
         self.model.eval()
 
         all_pred = []
@@ -400,21 +400,32 @@ class Trainer(object):
             # 计算损失
             loss = self.loss_func(y_pred, batch_dict['packer'])
             loss_t = loss.item()
-            running_loss += (loss_t - running_loss) / (batch_index + 1)
+            running_loss.append(loss_t)
 
             # 计算准确率
             acc_t = compute_accuracy(y_pred, batch_dict['packer'])
-            running_acc += (acc_t - running_acc) / (batch_index + 1)
+            running_acc.append(acc_t)
 
             all_pred.extend(y_pred.max(dim=1)[1])
             all_pack.extend(batch_dict['packer'])
 
-        self.train_state['test_loss'] = running_loss
-        self.train_state['test_acc'] = running_acc
+        self.train_state['test_loss'] = sum(running_loss) / len(running_loss)
+        self.train_state['test_acc'] = sum(running_acc) / len(running_acc)
+
+        classes_name = [
+            self.dataset.vectorizer.packer_vocab.lookup_index(i)
+            for i in range(
+                len(set([j.cpu().numpy().tolist() for j in all_pack])))
+        ]
 
         # 混淆矩阵
-        print("---->>>   Confusion Matrix:")
-        Confusion_matrix(all_pred, all_pack)
+        # print("---->>>   Confusion Matrix:")
+        Confusion_matrix(
+            y_pred=all_pred,
+            y_target=all_pack,
+            classes_name=classes_name,
+            save_dir=config["save_dir"] / config["confusion_matrix_img"],
+            show_plot=False)
 
         # 详细信息
         print("---->>>   Test performance:")

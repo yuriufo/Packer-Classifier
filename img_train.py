@@ -21,19 +21,20 @@ from Datasets.img_datasets import get_image_datasets
 
 # 参数
 config = {
-    "seed": 7,
+    "seed": 4396,
     "cuda": False,
     "shuffle": True,
     "train_state_file": "train_state.json",
     "vectorizer_file": "vectorizer.json",
     "model_state_file": "model.pth",
     "performance_img": "performance.png",
-    "save_dir": Path.cwd() / "experiments",
+    "confusion_matrix_img": "confusion_matrix_img.png",
+    "save_dir": Path.cwd() / "experiments" / "img",
     "state_size": [0.7, 0.15, 0.15],  # [训练, 验证, 测试]
-    "batch_size": 64,
-    "num_epochs": 15,
+    "batch_size": 80,
+    "num_epochs": 5,
     "early_stopping_criteria": 3,
-    "learning_rate": 3e-4
+    "learning_rate": 3e-5
 }
 
 
@@ -288,9 +289,20 @@ class Trainer(object):
         self.train_state['test_loss'] = running_loss
         self.train_state['test_acc'] = running_acc
 
+        classes_name = [
+            self.dataset.vectorizer.packer_vocab.lookup_index(i)
+            for i in range(
+                len(set([j.cpu().numpy().tolist() for j in all_pack])))
+        ]
+
         # 混淆矩阵
-        print("---->>>   Confusion Matrix:")
-        Confusion_matrix(all_pred, all_pack)
+        # print("---->>>   Confusion Matrix:")
+        Confusion_matrix(
+            y_pred=all_pred,
+            y_target=all_pack,
+            classes_name=classes_name,
+            save_dir=config["save_dir"] / config["confusion_matrix_img"],
+            show_plot=False)
 
         # 详细信息
         print("---->>>   Test performance:")
@@ -334,7 +346,7 @@ def train():
     plot_performance(
         train_state=trainer.train_state,
         save_dir=config["save_dir"] / config["performance_img"],
-        show_plot=True)
+        show_plot=False)
 
     # 测试
     trainer.run_test_loop()
