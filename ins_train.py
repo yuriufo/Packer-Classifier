@@ -22,7 +22,7 @@ from my_models.En_De import InsEncoder, InsDecoder
 
 # 参数
 config = {
-    "seed": 22,
+    "seed": 4396,
     "cuda": False,
     "shuffle": True,
     "train_state_file": "train_state.json",
@@ -34,17 +34,17 @@ config = {
     "cutoff": 25,
     "num_layers": 1,
     "embedding_dim": 100,
-    "kernels": [3, 5],
+    "kernels": [1, 3],
     "num_filters": 100,
     "rnn_hidden_dim": 64,
     "hidden_dim": 36,
-    "dropout_p": 0.3,
+    "dropout_p": 0.5,
     "bidirectional": False,
     "state_size": [0.7, 0.15, 0.15],  # [训练, 验证, 测试]
     "batch_size": 20,
     "num_epochs": 50,
     "early_stopping_criteria": 4,
-    "learning_rate": 2e-5
+    "learning_rate": 3e-5
 }
 
 
@@ -124,7 +124,7 @@ class Trainer(object):
         #    self.model.parameters(), lr=learning_rate)  # 新的优化方法
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer=self.optimizer, mode='min', factor=0.7, patience=1)
+            optimizer=self.optimizer, mode='min', factor=0.5, patience=1)
         self.train_state = {
             'done_training': False,
             'stop_early': False,
@@ -291,7 +291,8 @@ class Trainer(object):
 
             # 学习率
             self.scheduler.step(self.train_state['val_loss'][-1])
-            self.train_state['learning_rate'] = float(list(self.optimizer.param_groups)[-1]['lr'])
+            self.train_state['learning_rate'] = float(
+                list(self.optimizer.param_groups)[-1]['lr'])
             self.train_state = update_train_state(
                 model=self.model, train_state=self.train_state)
 
@@ -341,7 +342,7 @@ class Trainer(object):
         classes_name = [
             self.dataset.vectorizer.packer_vocab.lookup_index(i)
             for i in range(
-                len(set([j.cpu().numpy().tolist() for j in all_pack])))
+                len(self.dataset.vectorizer.packer_vocab))
         ]
 
         # 混淆矩阵
@@ -350,7 +351,7 @@ class Trainer(object):
             y_pred=all_pred,
             y_target=all_pack,
             classes_name=classes_name,
-            save_dir=config["save_dir"] / config["confusion_matrix_img"],
+            save_dir=self.train_state["save_dir"] / config["confusion_matrix_img"],
             show_plot=False)
 
         # 详细信息
@@ -362,7 +363,7 @@ class Trainer(object):
 def train():
     # 加载数据集
     dataset = get_ins_datasets(
-        csv_path=r"F:\my_packer\csv\train_data_20190429.pkl",
+        csv_path=r"F:\my_packer\csv\train_data.pkl",
         randam_seed=config["seed"],
         state_size=config["state_size"],
         vectorize=None)
@@ -407,7 +408,7 @@ def train():
     plot_performance(
         train_state=trainer.train_state,
         save_dir=config["save_dir"] / config["performance_img"],
-        show_plot=True)
+        show_plot=False)
 
     # 测试
     trainer.run_test_loop()

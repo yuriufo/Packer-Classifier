@@ -64,10 +64,10 @@ def update_train_state(model, train_state):
                     model.state_dict(),
                     str(train_state['save_dir'] /
                         train_state['model_filename']))
+                train_state['early_stopping_best_val'] = loss_t
 
             # 重置早停的步数
             train_state['early_stopping_step'] = 0
-            train_state['early_stopping_best_val'] = loss_t
 
         # 是否需要早停
         train_state['stop_early'] = train_state[

@@ -109,7 +109,7 @@ def get_yuri(packer_ex_path=""):
         if num % 100 == 0:
             stop()
             gc.collect()
-            time.sleep(60 * 10)
+            time.sleep(60 * 5)
 
         try:
             revertToSnapshot()

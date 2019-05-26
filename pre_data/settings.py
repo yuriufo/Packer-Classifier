@@ -39,5 +39,5 @@ PACKERS_LANDSPACE = {
     3: 'PECompact',
     4: 'PeSpin',
     5: 'UPX',
-    6: 'Nopack'
+    6: 'Normal'
 }

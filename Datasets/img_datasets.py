@@ -82,6 +82,10 @@ class IMG_SequenceVocabulary():
         return contents
 
     @classmethod
+    def from_serializable(cls, contents):
+        return cls(contents['train_means'], contents['train_stds'])
+
+    @classmethod
     def from_dataframe(cls, df):
         train_data = df[df.split == "train"]
         means = {0: [], 1: [], 2: []}

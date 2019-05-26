@@ -60,7 +60,7 @@ def main():
     for sub_path in sub_path_list:
         get_csv(sub_path, data_dict)
     df = pd.DataFrame(data_dict)
-    pd.to_pickle(df, sts.SAVE_CSV_PATH / 'train_data_20190429.pkl')
+    pd.to_pickle(df, sts.SAVE_CSV_PATH / 'train_data.pkl')
 
 
 if __name__ == '__main__':

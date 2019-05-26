@@ -23,23 +23,32 @@ class ODEfunc(nn.Module):
         super(ODEfunc, self).__init__()
         self.norm1 = norm(dim)
         self.relu = nn.ReLU(inplace=True)
-        self.conv1 = nn.Conv2d(dim, dim, 3, 1, 1)
+        self.conv1 = nn.Conv2d(dim + 1, dim, 3, 1, 1)
         self.norm2 = norm(dim)
-        self.conv2 = nn.Conv2d(dim, dim, 3, 1, 1)
+        self.conv2 = nn.Conv2d(dim + 1, dim, 3, 1, 1)
         self.norm3 = norm(dim)
         self.nfe = 0
 
     def forward(self, t, x):
         self.nfe += 1
+
         out = self.norm1(x)
         out = self.relu(out)
+
+        # add_time
+        tt = torch.ones_like(out[:, :1, :, :]) * t
+        out = torch.cat([tt, out], 1)
         out = self.conv1(out)
 
         out = self.norm2(out)
         out = self.relu(out)
+        # add_time
+        tt = torch.ones_like(out[:, :1, :, :]) * t
+        out = torch.cat([tt, out], 1)
         out = self.conv2(out)
 
         out = self.norm3(out)
+
         return out
 
 
@@ -136,6 +145,13 @@ if __name__ == '__main__':
     x = torch.Tensor(128, 3, 32, 32)
     print(x.shape)
 
-    modle = ODEnet(3, 64, 10, 0.1)
+    # modle = ODEnet(3, 64, 10, 0.1)
+    # modle(x)
 
-    modle(x)
+    cc = nn.Conv2d(3, 64, 3, 1)
+    x = cc(x)
+
+    cc = nn.Conv2d(64, 64, 4, 2, 1)
+    x = cc(x)
+    x = cc(x)
+    print(x.shape)

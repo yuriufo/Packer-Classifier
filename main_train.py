@@ -17,8 +17,6 @@ import numpy as np
 
 from gadgets.ggs import compute_accuracy, update_train_state, save_train_state, plot_performance, Confusion_matrix
 
-from my_models.ODEnet import Flatten, norm
-
 from Datasets.datasets import get_datasets
 from ins_train import InsModel
 from img_train import IngModel
@@ -38,23 +36,23 @@ config = {
     "input_dim": 3,
     "state_dim": 64,
     "reduction": 16,
-    "tol": 1e-3,
+    "tol": 1e-5,
     # GRU
     "cutoff": 25,
     "num_layers": 1,
     "embedding_dim": 100,
-    "kernels": [3, 5],
+    "kernels": [1, 3],
     "num_filters": 100,
     "rnn_hidden_dim": 64,
     "hidden_dim": 36,
-    "dropout_p": 0.4,
+    "dropout_p": 0.5,
     "bidirectional": False,
     # 超参数, [训练, 验证, 测试]
     "state_size": [0.7, 0.15, 0.15],
-    "batch_size": 16,
-    "num_epochs": 60,
+    "batch_size": 26,
+    "num_epochs": 50,
     "early_stopping_criteria": 4,
-    "learning_rate": 4e-5
+    "learning_rate": 3e-5
 }
 
 
@@ -110,11 +108,8 @@ class MainModel(nn.Module):
             char_padding_idx=char_padding_idx)
 
         # 修改全连接层
-        self.img_layer.fc_layers = nn.Sequential(
-            norm(state_dim), nn.ReLU(inplace=True), nn.AdaptiveAvgPool2d(1),
-            Flatten())
-        self.ins_layer.decoder.fc_layers = nn.Sequential(
-            nn.Dropout(dropout_p), nn.Linear(rnn_hidden_dim, hidden_dim))
+        self.img_layer.fc_layers = self.img_layer.fc_layers[:-1]
+        self.ins_layer.decoder.fc_layers = self.ins_layer.decoder.fc_layers[:2]
 
         # classifier
         self.classifier = nn.Sequential(
@@ -414,8 +409,7 @@ class Trainer(object):
 
         classes_name = [
             self.dataset.vectorizer.packer_vocab.lookup_index(i)
-            for i in range(
-                len(set([j.cpu().numpy().tolist() for j in all_pack])))
+            for i in range(len(self.dataset.vectorizer.packer_vocab))
         ]
 
         # 混淆矩阵
@@ -424,7 +418,8 @@ class Trainer(object):
             y_pred=all_pred,
             y_target=all_pack,
             classes_name=classes_name,
-            save_dir=config["save_dir"] / config["confusion_matrix_img"],
+            save_dir=self.train_state["save_dir"] /
+            config["confusion_matrix_img"],
             show_plot=False)
 
         # 详细信息
@@ -436,7 +431,7 @@ class Trainer(object):
 def train():
     # 加载数据集
     dataset = get_datasets(
-        csv_path=r"F:\my_packer\csv\train_data_20190429.pkl",
+        csv_path=r"F:\my_packer\csv\train_data.pkl",
         randam_seed=config["seed"],
         state_size=config["state_size"],
         vectorize=None)
@@ -485,7 +480,7 @@ def train():
     plot_performance(
         train_state=trainer.train_state,
         save_dir=config["save_dir"] / config["performance_img"],
-        show_plot=True)
+        show_plot=False)
 
     # 测试
     trainer.run_test_loop()

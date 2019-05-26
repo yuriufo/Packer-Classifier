@@ -237,7 +237,7 @@ class Dataset(Dataset):
             yield out_data_dict
 
 
-def get_datasets(csv_path=sts.SAVE_CSV_PATH / "train_data_20190429.pkl",
+def get_datasets(csv_path=sts.SAVE_CSV_PATH / "train_data.pkl",
                  randam_seed=None,
                  state_size=[0.7, 0.15, 0.15],
                  vectorize=None):
@@ -253,9 +253,9 @@ def get_datasets(csv_path=sts.SAVE_CSV_PATH / "train_data_20190429.pkl",
     for _, row in df.iterrows():
         by_packer[row.packer].append(row.to_dict())
 
-    # print("---->>>   packer:")
-    # for packer in by_packer:
-    #     print("{0}: {1}".format(packer, len(by_packer[packer])))
+    print("---->>>   packer:")
+    for packer in by_packer:
+        print("{0}: {1}".format(packer, len(by_packer[packer])))
 
     final_list = []
     for _, item_list in sorted(by_packer.items()):

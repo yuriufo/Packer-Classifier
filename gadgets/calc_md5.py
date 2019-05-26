@@ -18,7 +18,7 @@ def calc_md5(str_):
 
 if __name__ == '__main__':
     md5_sets = set()
-    for file_path in get_files_list(r'F:\my_packer\Unpackme\PE321'):
+    for file_path in get_files_list(r'F:\my_packer\packed\PeSpin\other'):
         s = ""
         with file_path.open("rb") as f:
             s = calc_md5(f.read())
@@ -27,6 +27,7 @@ if __name__ == '__main__':
                 print("md5: {}".format(s))
                 exit(0)
             md5_sets.add(s)
+
         file_path.replace(file_path.with_name(s))
     else:
         print("ok")

@@ -13,7 +13,7 @@ import torch.optim as optim
 import time
 import uuid
 
-from my_models.ODEnet import SE_ODEfunc, ODEBlock, Flatten, norm
+from my_models.ODEnet import ODEfunc, ODEBlock, Flatten, norm
 # from my_models.my_transformer import ST
 from gadgets.ggs import compute_accuracy, update_train_state, save_train_state, plot_performance, Confusion_matrix
 
@@ -31,9 +31,9 @@ config = {
     "confusion_matrix_img": "confusion_matrix_img.png",
     "save_dir": Path.cwd() / "experiments" / "img",
     "state_size": [0.7, 0.15, 0.15],  # [训练, 验证, 测试]
-    "batch_size": 80,
-    "num_epochs": 5,
-    "early_stopping_criteria": 3,
+    "batch_size": 20,
+    "num_epochs": 30,
+    "early_stopping_criteria": 4,
     "learning_rate": 3e-5
 }
 
@@ -79,7 +79,7 @@ class IngModel(nn.Module):
             nn.Conv2d(state_dim, state_dim, 4, 2, 1))
 
         self.feature_layers = ODEBlock(
-            SE_ODEfunc(state_dim, reduction), rtol=tol, atol=tol)
+            ODEfunc(state_dim, reduction), rtol=tol, atol=tol)
 
         self.fc_layers = nn.Sequential(
             norm(state_dim), nn.ReLU(inplace=True), nn.AdaptiveAvgPool2d(1),
@@ -292,7 +292,7 @@ class Trainer(object):
         classes_name = [
             self.dataset.vectorizer.packer_vocab.lookup_index(i)
             for i in range(
-                len(set([j.cpu().numpy().tolist() for j in all_pack])))
+                len(self.dataset.vectorizer.packer_vocab))
         ]
 
         # 混淆矩阵
@@ -301,7 +301,7 @@ class Trainer(object):
             y_pred=all_pred,
             y_target=all_pack,
             classes_name=classes_name,
-            save_dir=config["save_dir"] / config["confusion_matrix_img"],
+            save_dir=self.train_state["save_dir"] / config["confusion_matrix_img"],
             show_plot=False)
 
         # 详细信息
@@ -313,7 +313,7 @@ class Trainer(object):
 def train():
     # 加载数据集
     dataset = get_image_datasets(
-        csv_path=r"F:\my_packer\csv\train_data_20190429.pkl",
+        csv_path=r"F:\my_packer\csv\train_data.pkl",
         randam_seed=config["seed"],
         state_size=config["state_size"],
         vectorize=None)
