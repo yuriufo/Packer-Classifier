@@ -66,7 +66,6 @@ class IngModel(nn.Module):
                  input_dim,
                  state_dim,
                  output_dim,
-                 reduction=16,
                  tol=1e-3):
         super(IngModel, self).__init__()
         # 输入shape：(3,32,32)
@@ -79,7 +78,7 @@ class IngModel(nn.Module):
             nn.Conv2d(state_dim, state_dim, 4, 2, 1))
 
         self.feature_layers = ODEBlock(
-            ODEfunc(state_dim, reduction), rtol=tol, atol=tol)
+            ODEfunc(state_dim), rtol=tol, atol=tol)
 
         self.fc_layers = nn.Sequential(
             norm(state_dim), nn.ReLU(inplace=True), nn.AdaptiveAvgPool2d(1),

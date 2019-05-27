@@ -35,7 +35,6 @@ config = {
     # ODEnet
     "input_dim": 3,
     "state_dim": 64,
-    "reduction": 16,
     "tol": 1e-5,
     # GRU
     "cutoff": 25,
@@ -77,18 +76,17 @@ def create_dirs(dirpath):
 
 
 class MainModel(nn.Module):
-    def __init__(self, input_dim, state_dim, output_dim, reduction, tol,
-                 embedding_dim, num_word_embeddings, num_char_embeddings,
-                 kernels, num_input_channels, num_output_channels,
-                 rnn_hidden_dim, hidden_dim, num_layers, bidirectional,
-                 dropout_p, word_padding_idx, char_padding_idx):
+    def __init__(self, input_dim, state_dim, output_dim, tol, embedding_dim,
+                 num_word_embeddings, num_char_embeddings, kernels,
+                 num_input_channels, num_output_channels, rnn_hidden_dim,
+                 hidden_dim, num_layers, bidirectional, dropout_p,
+                 word_padding_idx, char_padding_idx):
         super(MainModel, self).__init__()
 
         self.img_layer = IngModel(
             input_dim=input_dim,
             output_dim=output_dim,
             state_dim=state_dim,
-            reduction=reduction,
             tol=tol)
 
         self.ins_layer = InsModel(
@@ -442,7 +440,6 @@ def train():
     model = MainModel(
         input_dim=config["input_dim"],
         state_dim=config["state_dim"],
-        reduction=config["reduction"],
         tol=config["tol"],
         embedding_dim=config["embedding_dim"],
         num_word_embeddings=len(vectorizer.ins_word_vocab),
