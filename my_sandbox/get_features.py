@@ -75,16 +75,23 @@ class Sandbox(object):
         print("--> revertToSnapshot")
         command = '{0} -T ws revertToSnapshot "{1}" {2}'.format(
             self.vmrun_path, self.vmx_path, self.vm_snapshot)
-        p = subprocess.Popen(command, shell=True)
-        p.wait()
+        p = subprocess.Popen(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        stdout, stderr = p.communicate()
+        print(stdout.decode('utf-8'), stderr.decode('utf-8'))
 
     # 启动虚拟机
-    def _start(self):
+    def _start(self, no_gui):
         print("--> start")
-        command = '{0} -T ws start "{1}" nogui'.format(self.vmrun_path,
-                                                       self.vmx_path)
-        p = subprocess.Popen(command, shell=True)
-        p.wait()
+        command = '{0} start "{1}"'.format(self.vmrun_path, self.vmx_path)
+        if no_gui:
+            command = command + ' nogui'
+        p = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, stderr = p.communicate()
+        print(stdout.decode('utf-8'), stderr.decode('utf-8'))
 
     # 把文件从主机复制到虚拟机
     def _copyFileFromHostToGuest(self, file_path, file_name):
@@ -92,8 +99,13 @@ class Sandbox(object):
         command = '{0} -gu {1} -gp {2} copyFileFromHostToGuest "{3}" "{4}" "{5}"'.format(
             self.vmrun_path, self.vm_user, self.vm_pass, self.vmx_path,
             file_path, os.path.join(self.malware_path, file_name))
-        p = subprocess.Popen(command, shell=True)
-        p.wait()
+        p = subprocess.Popen(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        stdout, stderr = p.communicate()
+        print(stdout.decode('utf-8'), stderr.decode('utf-8'))
 
     # 运行虚拟机中的脚本
     def _runProgramInGuest(self, file_name):
@@ -101,8 +113,13 @@ class Sandbox(object):
         command = '{0} -T ws -gu {1} -gp {2} runProgramInGuest "{3}" "{4}" "{5}" -t {6} -f {7}'.format(
             self.vmrun_path, self.vm_user, self.vm_pass, self.vmx_path,
             self.python_path, self.script_path, self.timeout, file_name)
-        p = subprocess.Popen(command, shell=True)
-        p.wait()
+        p = subprocess.Popen(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        stdout, stderr = p.communicate()
+        print(stdout.decode('utf-8'), stderr.decode('utf-8'))
 
     # 把预处理内容从虚拟机复制到主机
     def _copyFileFromGuestToHost(self, save_path, file_name):
@@ -111,16 +128,28 @@ class Sandbox(object):
             self.vmrun_path, self.vm_user, self.vm_pass, self.vmx_path,
             os.path.join(self.malware_path, (file_name + ".yuri")),
             os.path.join(save_path, file_name + ".yuri"))
-        p = subprocess.Popen(command, shell=True)
-        p.wait()
+        p = subprocess.Popen(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        stdout, stderr = p.communicate()
+        print(stdout.decode('utf-8'), stderr.decode('utf-8'))
 
     # 关闭虚拟机
     def _stop(self):
         print("--> stop")
-        command = '{0} -T ws stop "{1}"'.format(self.vmrun_path, self.vmx_path)
-        subprocess.Popen(command, shell=True)
+        command = '{0} -T ws stop "{1}" hard'.format(self.vmrun_path,
+                                                     self.vmx_path)
+        p = subprocess.Popen(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        stdout, stderr = p.communicate()
+        print(stdout.decode('utf-8'), stderr.decode('utf-8'))
 
-    def get_features(self, packer_file_path):
+    def get_features(self, packer_file_path, no_gui=True, stop=True):
 
         file_path = Path(packer_file_path)
         if not file_path.is_file():
@@ -130,20 +159,22 @@ class Sandbox(object):
 
         try:
             self._revertToSnapshot()
-            self._start()
+            self._start(no_gui)
             self._copyFileFromHostToGuest(packer_file_path, file_name)
             self._runProgramInGuest(file_name)
             self._copyFileFromGuestToHost(str(file_path), file_name)
-        except Exception as e:
-            print(e)
-            print("{0} get worry.".format(packer_file_path))
-        else:
-            self._stop()
+            if stop:
+                self._stop()
             print("--> get features")
             with open(packer_file_path + ".yuri", "r") as file_read:
                 features = file_read.read()
             os.remove(packer_file_path + ".yuri")
             print("--> completed!")
+        except Exception as e:
+            print(e)
+            print("{0} get worry.".format(packer_file_path))
+            return None
+        else:
             return features
 
 
@@ -158,5 +189,5 @@ if __name__ == '__main__':
         python_path=r"C:\Users\msi\AppData\Local\Programs\Python\Python35\python.exe",
         malware_path=r"C:\Malware",
         timeout=10)
-    features = sb.get_features(r"C:\Users\msi\Desktop\rmvbfix.exe")
+    features = sb.get_features(r"C:\Users\msi\Desktop\aspack变形.exe")
     print(features)

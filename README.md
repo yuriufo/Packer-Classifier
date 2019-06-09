@@ -1,5 +1,4 @@
 # Packer-Classifier
-Graduation Project
 
 ## `./gadgets/`
 
@@ -60,10 +59,14 @@ Graduation Project
 
 在实现过程中被淘汰的脚本。
 
+## `./images/`
+
+模块流程图。
+
 ## `./`
 
 * `img_train.py`：机器码模型的单独训练脚本
 * `ins_train.py`：反汇编指令模型的单独训练脚本
 * `main_train.py`：模型整合的训练脚本
 * `main_train.ipynb`：谷歌Colaboratory训练的IPython notebook
-* `presentation.ipynb`：系统实现的IPython notebook
+* `presentation.ipynb`：系统演示的IPython notebook
